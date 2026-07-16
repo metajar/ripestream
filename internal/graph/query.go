@@ -382,6 +382,7 @@ type ASNIssueFilter struct {
 	MinLoss   float64
 	MinProbes int64
 	Limit     int
+	Offset    int
 	Sort      string // loss | probes | samples | last_seen | impact
 	Order     string // desc | asc
 }

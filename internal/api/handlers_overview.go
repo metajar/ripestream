@@ -72,6 +72,7 @@ func (s *Server) asnIssues(w http.ResponseWriter, r *http.Request) {
 		MinLoss:   qFloat(r, "min_loss", 0.1),
 		MinProbes: qInt64(r, "min_probes"),
 		Limit:     qInt(r, "limit", 20),
+		Offset:    qInt(r, "offset", 0),
 		Sort:      r.URL.Query().Get("sort"),
 		Order:     r.URL.Query().Get("order"),
 	}
@@ -81,5 +82,15 @@ func (s *Server) asnIssues(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadGateway, "graph query failed: "+err.Error())
 		return
 	}
-	respondOK(w, out)
+	// Pagination meta: report effective limit/offset and whether more may exist.
+	// We don't claim an exact total (a separate count query is expensive); the
+	// frontend uses has_more (returned a full page) to offer Load more.
+	hasMore := len(out) >= f.Limit
+	writeJSON(w, http.StatusOK, envelope{
+		Data: out,
+		Meta: map[string]any{
+			"limit": f.Limit, "offset": f.Offset, "sort": f.Sort,
+			"order": f.Order, "has_more": hasMore,
+		},
+	})
 }

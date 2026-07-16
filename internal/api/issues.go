@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"ripestream/internal/graph"
 )
@@ -42,9 +43,11 @@ const (
 	highLossPct        = 20 // >= this is high
 )
 
-// issues handles GET /api/issues?severity=&limit=
+// issues handles GET /api/issues?severity=&limit=&range=1h|24h|7d
 // Merges detected graph patterns with active alerts, dedupes by stable key,
-// and ranks by severity then evidence breadth.
+// and ranks by severity then evidence breadth. When a range is provided,
+// detected destination-AS issues are augmented with a ClickHouse window summary
+// (loss over the selected window + baseline change) as additional evidence.
 func (s *Server) issues(w http.ResponseWriter, r *http.Request) {
 	limit := qInt(r, "limit", 10)
 	if limit < 1 {
@@ -54,9 +57,17 @@ func (s *Server) issues(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 	severityFilter := r.URL.Query().Get("severity")
+	rangeStr := r.URL.Query().Get("range")
 
 	ctx := r.Context()
 	issues := s.detectIssues(ctx)
+
+	// Augment destination-wide issues with ClickHouse window data when a range
+	// is requested. The graph gives latest-value detection; the window gives the
+	// selected-period rate and baseline comparison so "increased" claims are backed.
+	if rangeStr != "" {
+		issues = s.augmentWithWindows(ctx, issues, rangeStr)
+	}
 
 	// Merge active alerts (if the alerting subsystem is wired).
 	if s.alerter != nil {
@@ -167,7 +178,64 @@ func (s *Server) detectIssues(ctx context.Context) []Issue {
 	return issues
 }
 
-// alertToIssue maps an active alert into the Issue schema.
+// augmentWithWindows adds ClickHouse window/baseline evidence to detected
+// issues when a range is selected. It resolves each destination-AS issue to a
+// representative target IP via the graph, then fetches the window summary for
+// that target over the selected range. Issues without a resolvable target are
+// left unchanged. Failures degrade gracefully (no augmentation).
+func (s *Server) augmentWithWindows(ctx context.Context, issues []Issue, rangeStr string) []Issue {
+	dur, ok := parseRange(rangeStr)
+	if !ok {
+		return issues
+	}
+	to := time.Now().UTC()
+	from := to.Add(-dur)
+	for i := range issues {
+		if issues[i].Kind != "destination_wide_loss" {
+			continue
+		}
+		// Resolve the ASN from the href (format "/asn/{asn}").
+		asnStr := strings.TrimPrefix(issues[i].Href, "/asn/")
+		asn, err := strconv.ParseInt(asnStr, 10, 64)
+		if err != nil || asn <= 0 {
+			continue
+		}
+		// Find a representative target IP for this ASN from the graph.
+		targets, err := s.graph.ASNTargets(ctx, asn, 1)
+		if err != nil || len(targets) == 0 {
+			continue
+		}
+		ws, err := s.ch.PingWindowSummary(ctx, targets[0].Addr, 0, from, to)
+		if err != nil {
+			continue
+		}
+		// Add window evidence without overwriting the graph-derived severity.
+		issues[i].Evidence = append(issues[i].Evidence,
+			fmt.Sprintf("Selected window (%s): %.1f%% loss, %.0fms avg RTT, %d samples",
+				rangeStr, ws.LossPct, ws.AvgRttMs, ws.Samples))
+		if ws.BaselineAvailable {
+			issues[i].Evidence = append(issues[i].Evidence,
+				fmt.Sprintf("Baseline: %.1f%% loss (change %+.1f pts), RTT change %+.0f%%",
+					ws.BaselineLossPct, ws.ChangeLossPct, ws.ChangeRttPct))
+		} else {
+			issues[i].Evidence = append(issues[i].Evidence, "Baseline: unavailable (no prior-window data)")
+		}
+	}
+	return issues
+}
+
+// parseRange maps a range shorthand to a duration.
+func parseRange(s string) (time.Duration, bool) {
+	switch s {
+	case "1h":
+		return time.Hour, true
+	case "24h":
+		return 24 * time.Hour, true
+	case "7d":
+		return 7 * 24 * time.Hour, true
+	}
+	return 0, false
+}
 func alertToIssue(a AlertView) Issue {
 	scope, href := parseAlertScope(a.ScopeKey)
 	return Issue{

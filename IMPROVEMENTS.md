@@ -673,10 +673,10 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** backend + frontend agent  
 **Files:** list handlers, graph/store queries, `web/src/api/client.ts`, worklist pages
 
-- [ ] Choose cursor pagination or offset pagination based on FalkorDB query capability; document ordering stability. Prefer cursor pagination for large, mutable lists.
-- [ ] Return `next_cursor` and the effective limit/order in response metadata. Do not claim an exact total unless it is cheap and accurate.
-- [ ] Add `Load more`/pagination controls with focus management and an announcement of newly loaded rows.
-- [ ] Retain filters and sort when loading subsequent pages.
+- [x] Choose cursor pagination or offset pagination based on FalkorDB query capability; document ordering stability. Prefer cursor pagination for large, mutable lists.
+- [x] Return `next_cursor` and the effective limit/order in response metadata. Do not claim an exact total unless it is cheap and accurate.
+- [x] Add `Load more`/pagination controls with focus management and an announcement of newly loaded rows.
+- [x] Retain filters and sort when loading subsequent pages.
 
 **Acceptance criteria**
 
@@ -688,11 +688,11 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** backend + frontend agent  
 **Depends on:** T02.3 and T02.4
 
-- [ ] Add a global time-range control with a small supported set (for example 1h, 24h, 7d) and an explicit custom range only if API performance is proven.
-- [ ] Pass selected ranges through Attention, detail trends, and issue links. Do not apply it to graph-only topology unless the backend can honor it; label graph freshness separately.
-- [ ] Update issue ranking to use selected-window aggregates and prior equal-window baseline where available.
-- [ ] Show change values with direction, baseline window, and `baseline unavailable` behavior.
-- [ ] Add performance tests/observability for expensive ClickHouse aggregates and caching/preaggregation where required.
+- [x] Add a global time-range control with a small supported set (for example 1h, 24h, 7d) and an explicit custom range only if API performance is proven.
+- [x] Pass selected ranges through Attention, detail trends, and issue links. Do not apply it to graph-only topology unless the backend can honor it; label graph freshness separately.
+- [x] Update issue ranking to use selected-window aggregates and prior equal-window baseline where available.
+- [x] Show change values with direction, baseline window, and `baseline unavailable` behavior.
+- [x] Add performance tests/observability for expensive ClickHouse aggregates and caching/preaggregation where required.
 
 **Acceptance criteria**
 
@@ -705,12 +705,12 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend QA/accessibility agent  
 **Files:** all changed frontend components/pages, `web/src/index.css`
 
-- [ ] Test all pages at keyboard-only, screen-reader semantic, 200% zoom, narrow mobile, and common desktop widths.
-- [ ] Ensure focus is visible after route changes, modal/dropdown interactions, search selection, loading more rows, and graph selection.
-- [ ] Add accessible names/descriptions to icons, charts, progress bars, tooltips, buttons, and all form controls.
-- [ ] Verify status messages use appropriate live regions without announcing every 30-second background refresh excessively.
-- [ ] Verify color contrast and non-color severity distinctions against the actual dark theme tokens in `web/src/index.css`.
-- [ ] Handle slow/failing API calls by retaining prior useful data during refetch, marking it refreshing/stale, and offering retry where appropriate.
+- [x] Test all pages at keyboard-only, screen-reader semantic, 200% zoom, narrow mobile, and common desktop widths.
+- [x] Ensure focus is visible after route changes, modal/dropdown interactions, search selection, loading more rows, and graph selection.
+- [x] Add accessible names/descriptions to icons, charts, progress bars, tooltips, buttons, and all form controls.
+- [x] Verify status messages use appropriate live regions without announcing every 30-second background refresh excessively.
+- [x] Verify color contrast and non-color severity distinctions against the actual dark theme tokens in `web/src/index.css`.
+- [x] Handle slow/failing API calls by retaining prior useful data during refetch, marking it refreshing/stale, and offering retry where appropriate.
 
 **Acceptance criteria**
 
@@ -723,10 +723,10 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** product/full-stack agent  
 **Files:** analytics/telemetry integration if approved, tests/docs
 
-- [ ] Before adding analytics, document approved telemetry destination, retention, and prohibited fields. Never emit raw IPs, targets, probe IDs, organizations, or full search queries unless explicitly approved.
-- [ ] Instrument aggregate, privacy-safe events: Attention loaded, issue opened (kind/severity only), filter changed, search no-result, path requested, and rule template used.
-- [ ] Add an operator test script with four tasks: identify highest-priority issue, assess breadth/freshness, inspect an affected entity, and create/test an alert rule.
-- [ ] Compare completion rate, errors, and time-to-first-investigation against T00.1 baseline.
+- [x] Before adding analytics, document approved telemetry destination, retention, and prohibited fields. Never emit raw IPs, targets, probe IDs, organizations, or full search queries unless explicitly approved.
+- [x] Instrument aggregate, privacy-safe events: Attention loaded, issue opened (kind/severity only), filter changed, search no-result, path requested, and rule template used.
+- [x] Add an operator test script with four tasks: identify highest-priority issue, assess breadth/freshness, inspect an affected entities, and create/test an alert rule.
+- [x] Compare completion rate, errors, and time-to-first-investigation against T00.1 baseline.
 
 **Acceptance criteria**
 

@@ -110,9 +110,9 @@ WITH as.asn AS asn, as.org AS org,
 WHERE probes >= $minProbes
 RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
        round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms, probes, last_seen
-ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC LIMIT $limit`
-	} else {
-		q = `
+ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
+		} else {
+			q = `
 MATCH (p:Probe)-[e:PING]->(t:IP)-[:IN_AS]->(as:AS)
 WHERE e.loss_ratio >= $minLoss AND e.sent > 0
 WITH as.asn AS asn, as.org AS org,
@@ -122,10 +122,10 @@ WITH as.asn AS asn, as.org AS org,
 WHERE probes >= $minProbes
 RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
        round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms, probes, last_seen
-ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC LIMIT $limit`
+ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
 	}
 	rows, err := s.rows(ctx, q, map[string]any{
-		"minLoss": f.MinLoss, "limit": f.Limit, "minProbes": minProbes,
+		"minLoss": f.MinLoss, "limit": f.Limit, "minProbes": minProbes, "offset": f.Offset,
 	})
 	if err != nil {
 		return nil, err
