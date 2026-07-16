@@ -17,7 +17,7 @@ edges:
     condition: when setting up FalkorDB or troubleshooting graph connectivity
   - target: context/alerts.md
     condition: when configuring alerting engine or SQLite database
-last_updated: 2025-01-16
+last_updated: 2026-07-16
 ---
 
 # Setup
@@ -56,6 +56,7 @@ last_updated: 2025-01-16
 
 ## Common Commands
 - `docker compose up -d` — start ClickHouse + FalkorDB containers
+- `CLICKHOUSE_PASSWORD='<secret>' GEOLITE_DB_URL='<https-mmdb-url>' docker compose -f docker-compose.prod.yml up -d --build` — build and start the full production stack (dashboard on host port 3000)
 - `docker compose down` — stop containers
 - `go build -o ripestream .` — build Go binary
 - `./ripestream --password ripestream` — run with default settings (firehose to both sinks)
@@ -68,6 +69,8 @@ last_updated: 2025-01-16
 - `cd web && npm run build` — build UI for embedding
 
 ## Common Issues
+- **Dokploy deployment**: Select `docker-compose.prod.yml`, set the required `CLICKHOUSE_PASSWORD` and `GEOLITE_DB_URL`, and route the domain to service `ripestream` on container port `8080`. Only the dashboard is published on host port 3000; the databases remain private.
+- **Production ASN download fails**: `GEOLITE_DB_URL` must return the raw, uncompressed MMDB over HTTPS. For a custom domain protected by Cloudflare Access, also set `GEOLITE_DB_CF_ACCESS_CLIENT_ID` and `GEOLITE_DB_CF_ACCESS_CLIENT_SECRET`. An optional `GEOLITE_DB_SHA256` rejects a corrupt or unexpected object.
 - **ClickHouse connection refused**: Ensure Docker Compose is running (`docker compose ps`). Check ClickHouse container logs (`docker compose logs clickhouse`).
 - **FalkorDB timeout errors**: Increase ReadTimeout in `internal/graph/store.go` (currently 10s). Check FalkorDB container is healthy (`docker compose ps falkordb`).
 - **Port already in use**: `lsof -i :8080` to find process, `kill -9 [PID]` or change `RIPESTREAM_HTTP_ADDR`.

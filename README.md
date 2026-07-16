@@ -87,6 +87,45 @@ topology older than 6 hours in small batches. ClickHouse retains the full result
 history. On the first production start after upgrading, the janitor may take
 several intervals to drain a large stale backlog without blocking ingestion.
 
+## Dokploy production deployment
+
+Use `docker-compose.prod.yml` as the Compose file in Dokploy and define a strong
+`CLICKHOUSE_PASSWORD` plus `GEOLITE_DB_URL` in the Dokploy environment. The
+deployment builds the embedded React UI and Go service, downloads GeoLite2-ASN
+from Cloudflare object storage at container startup, runs the RIPE Atlas firehose
+ingestor, and starts private ClickHouse and FalkorDB services with persistent
+volumes.
+
+Only the Ripestream UI/API is published, at port `3000`. Point the Dokploy domain
+at the `ripestream` service on container port `8080` (or use the published port
+directly). ClickHouse and FalkorDB are intentionally not exposed on the host.
+
+To validate or run the production stack locally:
+
+```bash
+CLICKHOUSE_PASSWORD='replace-me' \
+GEOLITE_DB_URL='https://assets.example.com/GeoLite2-ASN.mmdb' \
+docker compose -f docker-compose.prod.yml config
+```
+
+The object must be the uncompressed `GeoLite2-ASN.mmdb` file. Configure these
+Dokploy variables:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GEOLITE_DB_URL` | yes | HTTPS URL of the Cloudflare R2 object |
+| `GEOLITE_DB_SHA256` | no | Expected SHA-256 checksum; startup fails on mismatch |
+| `GEOLITE_DB_AUTHORIZATION` | no | Complete `Authorization` header value for a protected endpoint |
+| `GEOLITE_DB_CF_ACCESS_CLIENT_ID` | no | Cloudflare Access service-token client ID |
+| `GEOLITE_DB_CF_ACCESS_CLIENT_SECRET` | no | Cloudflare Access service-token client secret |
+
+For a private R2 custom domain protected by Cloudflare Access, set both Access
+service-token variables. For a public custom-domain object, only the URL is
+needed. Avoid an R2 presigned URL for this long-lived setting because it expires.
+The entrypoint downloads to a temporary file, optionally verifies it, atomically
+replaces the copy under the persistent `/data` volume, and only then starts the
+application. A download or validation failure prevents ingestion from starting.
+
 ## Web UI & API
 
 The binary also serves an observability dashboard and JSON API (dark-mode,

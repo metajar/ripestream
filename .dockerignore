@@ -1,0 +1,17 @@
+.git
+.github
+.mex
+.agents
+.codex
+
+ripestream
+ripestream.exe
+ripestream.db
+*.log
+.DS_Store
+
+geolite/*.mmdb
+web/node_modules
+web/dist
+web/tsconfig.tsbuildinfo
+web/.env*
