@@ -51,6 +51,27 @@ export function TargetDetailPage() {
         )}
       </div>
 
+      {/* What we see — plain-language summary */}
+      <div className="rounded-lg border border-border-primary bg-bg-secondary p-4">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-text-quaternary">What we see</h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          Target <span className="font-mono text-text-primary">{d.addr}</span>{" "}
+          {d.asn ? (
+            <>in {d.org || `AS${d.asn}`} </>
+          ) : (
+            <>with no attributed AS </>
+          )}
+          is observed by <strong className="text-text-primary">{d.probes.length} {d.probes.length === 1 ? "probe" : "probes"}</strong>.
+          {d.probes.length > 0 && (
+            <> {" "}Latest PING-edge values; historical trend shown below from ClickHouse.</>
+          )}
+        </p>
+        <p className="mt-1 text-sm text-text-quaternary">
+          Scope: {d.probes.length} probes, {d.nearby_hops.length} adjacent hops.
+          {d.asn && <> In <Link to={`/asn/${d.asn}`} className="text-brand-300 hover:text-brand-500">AS{d.asn}</Link>.</>}
+        </p>
+      </div>
+
       {/* Trend chart */}
       <Card>
         <CardHeader>

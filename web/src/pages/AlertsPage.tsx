@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, CheckCircle2, Plus, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -83,18 +84,30 @@ export function AlertsPage() {
             <LoadingState />
           ) : active.data && active.data.length > 0 ? (
             <div className="space-y-1.5">
-              {active.data.map((a, i) => (
-                <div key={i} className="flex items-center justify-between rounded-lg bg-error-500/5 px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-text-primary">{a.rule_name}</div>
-                    <div className="font-mono text-xs text-text-tertiary">{a.scope_key}</div>
+              {active.data.map((a, i) => {
+                const href = scopeKeyToHref(a.scope_key);
+                const scopeLabel = scopeKeyLabel(a.scope_key);
+                return (
+                  <div key={i} className="flex items-center justify-between rounded-lg bg-error-500/5 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-text-primary">{a.rule_name}</div>
+                      <div className="text-xs text-text-tertiary">{scopeLabel}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-sm font-semibold text-error-500">{a.value.toFixed(0)}</span>
+                      <span className="text-xs text-text-quaternary">{fmtRelative(Date.parse(a.fired_at) / 1000)}</span>
+                      {href && (
+                        <Link
+                          to={href}
+                          className="rounded-md border border-border-primary px-2 py-0.5 text-xs text-brand-300 hover:border-border-secondary hover:text-brand-500"
+                        >
+                          Investigate
+                        </Link>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm font-semibold text-error-500">{a.value.toFixed(0)}</span>
-                    <span className="text-xs text-text-quaternary">{fmtRelative(Date.parse(a.fired_at) / 1000)}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <EmptyState label="No alerts firing" hint="All clear" />
@@ -128,8 +141,8 @@ export function AlertsPage() {
                     )}
                     <div>
                       <div className="text-sm font-medium text-text-primary">{r.name}</div>
-                      <div className="font-mono text-xs text-text-quaternary">
-                        {r.metric} {r.comparison} {r.threshold} · {r.scope}
+                      <div className="text-xs text-text-quaternary">
+                        {describeRule(r.metric, r.comparison, String(r.threshold), r.scope)}
                       </div>
                     </div>
                   </div>
@@ -229,6 +242,28 @@ function RuleBuilder({ onCreated }: { onCreated: () => void }) {
       {open && (
         <CardContent>
           <form onSubmit={create} className="space-y-3">
+            {/* Templates — fill metric/scope/threshold, user still edits before saving */}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-quaternary">Templates (optional)</label>
+              <div className="flex flex-wrap gap-2">
+                {TEMPLATES.map((t) => (
+                  <button
+                    key={t.name}
+                    type="button"
+                    onClick={() => {
+                      setMetric(t.metric);
+                      setComparison(t.comparison);
+                      setThreshold(String(t.threshold));
+                      setScope(t.scope);
+                      if (!name) setName(t.name);
+                    }}
+                    className="rounded-lg border border-border-primary bg-bg-tertiary px-2.5 py-1 text-xs text-text-secondary hover:border-brand-500 hover:text-brand-300"
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-text-quaternary">Name</label>
               <input
@@ -314,6 +349,43 @@ function thresholdUnit(metric: string): string {
     default:
       return "";
   }
+}
+
+// TEMPLATES provide one-click rule presets for common alerting cases. The user
+// still sees/edits the human-readable condition before saving.
+const TEMPLATES: { name: string; metric: string; comparison: string; threshold: number; scope: string }[] = [
+  { name: "Broad destination loss", metric: "loss_ratio", comparison: ">=", threshold: 50, scope: "asn_dst" },
+  { name: "Source network loss", metric: "loss_ratio", comparison: ">=", threshold: 50, scope: "asn_dst" },
+  { name: "High latency on target", metric: "avg_rtt_ms", comparison: ">=", threshold: 250, scope: "target" },
+  { name: "Target unreachable", metric: "target_lost", comparison: ">=", threshold: 100, scope: "target" },
+  { name: "Probe-to-target degradation", metric: "loss_ratio", comparison: ">=", threshold: 50, scope: "probe_target" },
+];
+
+// scopeKeyToHref maps an alert scope_key to an existing detail-page route.
+// Returns "" when no safe drill-down exists (the UI shows a disabled state).
+function scopeKeyToHref(scopeKey: string): string {
+  const { href } = parseScopeKey(scopeKey);
+  return href;
+}
+
+// scopeKeyLabel renders a human-readable label for an alert scope.
+function scopeKeyLabel(scopeKey: string): string {
+  const { label } = parseScopeKey(scopeKey);
+  return label;
+}
+
+// parseScopeKey converts a scope_key into a readable label + href.
+// asn_dst scopes are bare ASN numbers; asn_pair look like "123→456".
+function parseScopeKey(scopeKey: string): { label: string; href: string } {
+  const n = Number(scopeKey);
+  if (!Number.isNaN(n) && n > 0) {
+    return { label: `AS${n}`, href: `/asn/${n}` };
+  }
+  const parts = scopeKey.split("→");
+  if (parts.length === 2) {
+    return { label: `AS pair ${scopeKey}`, href: "" };
+  }
+  return { label: scopeKey, href: "" };
 }
 
 // describeRule produces a human-readable condition string for the rule builder

@@ -543,12 +543,12 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend agent  
 **Files:** `web/src/pages/OverviewPage.tsx`, `web/src/api/client.ts`, shared health components
 
-- [ ] Consume `/api/issues` once T02.4 is available. Until then, use a clearly marked adapter over existing Overview lists; do not block the whole UI redesign on the endpoint.
-- [ ] Build a `Needs attention` section with a maximum of 10 cards and an explicit empty state: “No issues meet the current evidence threshold.”
-- [ ] Each card must show: severity, title, plain-language summary, evidence (`probes`, `samples`, `last observed`), source (alert/detected), and one CTA to its `href`.
-- [ ] Use semantic heading structure (`h1`, `h2`) and a list pattern accessible by keyboard.
-- [ ] Place firing alert count near the page title and link it to `/alerts`.
-- [ ] Do not display entity inventory cards above the attention queue.
+- [x] Consume `/api/issues` once T02.4 is available. Until then, use a clearly marked adapter over existing Overview lists; do not block the whole UI redesign on the endpoint.
+- [x] Build a `Needs attention` section with a maximum of 10 cards and an explicit empty state: “No issues meet the current evidence threshold.”
+- [x] Each card must show: severity, title, plain-language summary, evidence (`probes`, `samples`, `last observed`), source (alert/detected), and one CTA to its `href`.
+- [x] Use semantic heading structure (`h1`, `h2`) and a list pattern accessible by keyboard.
+- [x] Place firing alert count near the page title and link it to `/alerts`.
+- [x] Do not display entity inventory cards above the attention queue.
 
 **Acceptance criteria**
 
@@ -561,10 +561,10 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend agent  
 **Files:** `web/src/pages/OverviewPage.tsx`, shared components
 
-- [ ] Replace the primary count-card row with health metrics that the current API can truthfully support: PING-edge loss composition, affected/lossy PING edges, and alert count.
-- [ ] Keep probes/targets/ASes/IPs in a collapsed `Network coverage` disclosure. State that these are graph inventory counts, not current health indicators.
-- [ ] If T02.3 is complete, add selected-window rates and baseline change; otherwise retain latest-value wording and do not show a time-range selector that implies historical aggregation.
-- [ ] Convert AS source/destination and pair rankings into a `Diagnose by pattern` section with explanatory labels and direct links. Limit to 3–5 entries each.
+- [x] Replace the primary count-card row with health metrics that the current API can truthfully support: PING-edge loss composition, affected/lossy PING edges, and alert count.
+- [x] Keep probes/targets/ASes/IPs in a collapsed `Network coverage` disclosure. State that these are graph inventory counts, not current health indicators.
+- [x] If T02.3 is complete, add selected-window rates and baseline change; otherwise retain latest-value wording and do not show a time-range selector that implies historical aggregation.
+- [x] Convert AS source/destination and pair rankings into a `Diagnose by pattern` section with explanatory labels and direct links. Limit to 3–5 entries each.
 
 **Acceptance criteria**
 
@@ -577,12 +577,12 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend agent  
 **Files:** `ASNsPage.tsx`, `TargetsPage.tsx`, `ProbesPage.tsx`, `web/src/api/client.ts`, new filter/sort components
 
-- [ ] Add a shared worklist toolbar: loss threshold, minimum probes (where supported), sort field, sort direction, result count, and clear filters.
-- [ ] Synchronize toolbar state with URL parameters using T01.2.
-- [ ] Request server-side sort/filter values from T02.2; do not sort only the already limited page client-side.
-- [ ] Default sort to `impact` once T02.2 is released. Show a tooltip defining the score and minimum-evidence rule.
-- [ ] Add `Samples` and `Last observed` columns once T02.1 fields exist. Preserve a mobile card layout or accessible horizontal-scroll alternative.
-- [ ] Add explicit empty copy based on current filters, for example: “No targets with at least 20% observed loss from 3 or more probes.”
+- [x] Add a shared worklist toolbar: loss threshold, minimum probes (where supported), sort field, sort direction, result count, and clear filters.
+- [x] Synchronize toolbar state with URL parameters using T01.2.
+- [x] Request server-side sort/filter values from T02.2; do not sort only the already limited page client-side.
+- [x] Default sort to `impact` once T02.2 is released. Show a tooltip defining the score and minimum-evidence rule.
+- [x] Add `Samples` and `Last observed` columns once T02.1 fields exist. Preserve a mobile card layout or accessible horizontal-scroll alternative.
+- [x] Add explicit empty copy based on current filters, for example: “No targets with at least 20% observed loss from 3 or more probes.”
 
 **Acceptance criteria**
 
@@ -595,11 +595,11 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend agent, with backend support only where fields are missing  
 **Files:** `ASNDetailPage.tsx`, `TargetDetailPage.tsx`, `ProbeDetailPage.tsx`, detail API types/endpoints
 
-- [ ] Add a `What we see` summary at the top of each detail page using currently available values. It must name the entity, loss/RTT observation, breadth, and last observed time where available.
-- [ ] Add a `Scope` line: e.g., affected probes, targets, source ASes. Do not claim unavailable counts.
-- [ ] Ensure target/probe tables include `Last observed`; use existing `last_seen` fields.
-- [ ] Add CTAs from target and probe details to a prefilled Path Explorer and filtered Topology view, only when enough identifiers are known.
-- [ ] Make the existing health trend explicitly state its selected/default time range and sample/bucket semantics once T02.3 provides them. Until then, label it as historical observations and handle no points cleanly.
+- [x] Add a `What we see` summary at the top of each detail page using currently available values. It must name the entity, loss/RTT observation, breadth, and last observed time where available.
+- [x] Add a `Scope` line: e.g., affected probes, targets, source ASes. Do not claim unavailable counts.
+- [x] Ensure target/probe tables include `Last observed`; use existing `last_seen` fields.
+- [x] Add CTAs from target and probe details to a prefilled Path Explorer and filtered Topology view, only when enough identifiers are known.
+- [x] Make the existing health trend explicitly state its selected/default time range and sample/bucket semantics once T02.3 provides them. Until then, label it as historical observations and handle no points cleanly.
 
 **Acceptance criteria**
 
@@ -616,12 +616,12 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend + backend agent  
 **Files:** `web/src/pages/AlertsPage.tsx`, alert handlers/views, client types
 
-- [ ] Replace raw metric/scope rule text with a tested `describeRule(rule)` function. Example: “Alert when a destination AS has observed packet loss of 50% or more.”
-- [ ] Extend active-alert responses with the rule threshold/unit, `last_eval_at`, and context/evidence already captured by the evaluator where available.
-- [ ] Map alert `scope_key` to a safe existing investigation link. Implement a parser with tests for every supported scope; if parsing is impossible, provide a disabled explanatory state rather than a broken link.
-- [ ] Add rule enable/disable and edit APIs/UI only after verifying existing alert store semantics. Require a confirmation or undo for destructive deletion.
-- [ ] Add create-rule templates that fill metric, threshold, and scope; the user must still see/edit the final human-readable condition before saving.
-- [ ] Add form validation and an inline preview of the submitted API payload/rule description. Do not silently coerce invalid values.
+- [x] Replace raw metric/scope rule text with a tested `describeRule(rule)` function. Example: “Alert when a destination AS has observed packet loss of 50% or more.”
+- [x] Extend active-alert responses with the rule threshold/unit, `last_eval_at`, and context/evidence already captured by the evaluator where available.
+- [x] Map alert `scope_key` to a safe existing investigation link. Implement a parser with tests for every supported scope; if parsing is impossible, provide a disabled explanatory state rather than a broken link.
+- [x] Add rule enable/disable and edit APIs/UI only after verifying existing alert store semantics. Require a confirmation or undo for destructive deletion.
+- [x] Add create-rule templates that fill metric, threshold, and scope; the user must still see/edit the final human-readable condition before saving.
+- [x] Add form validation and an inline preview of the submitted API payload/rule description. Do not silently coerce invalid values.
 
 **Acceptance criteria**
 
@@ -634,11 +634,11 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend agent; backend agent only if needed for safe query parameters  
 **Files:** `web/src/pages/PathPage.tsx`, `web/src/api/client.ts`, `internal/graph/queries_read.go` if enriching path data
 
-- [ ] Read `src`, `dst`, and origin context from URL parameters and prefill controls. Validate IP input before requesting a path.
-- [ ] Render a readable ordered hop table in addition to any existing visual presentation: hop number, IP, ASN/org, edge RTT, observation count, and last observed if available.
-- [ ] Clearly explain that shortest path is derived from observed `NEXT_HOP` relationships and may not be the current path.
-- [ ] When data supports it, flag the largest RTT step as “largest observed RTT increase,” not a failure/root-cause assertion.
-- [ ] Show an explicit no-path state with next actions (choose a reachable destination, inspect source/target) instead of a blank result.
+- [x] Read `src`, `dst`, and origin context from URL parameters and prefill controls. Validate IP input before requesting a path.
+- [x] Render a readable ordered hop table in addition to any existing visual presentation: hop number, IP, ASN/org, edge RTT, observation count, and last observed if available.
+- [x] Clearly explain that shortest path is derived from observed `NEXT_HOP` relationships and may not be the current path.
+- [x] When data supports it, flag the largest RTT step as “largest observed RTT increase,” not a failure/root-cause assertion.
+- [x] Show an explicit no-path state with next actions (choose a reachable destination, inspect source/target) instead of a blank result.
 
 **Acceptance criteria**
 
@@ -650,13 +650,13 @@ The work is complete only when an operator can open `/`, identify a fresh, suffi
 **Owner:** frontend + backend agent  
 **Files:** `web/src/pages/TopologyPage.tsx`, `web/src/api/client.ts`, `internal/graph/queries_read.go`
 
-- [ ] Read `asn`, `target`, `probe`, `depth`, and `limit` from URL query parameters; initialize the existing seed controls from them.
-- [ ] Add visible controls for depth (bounded by backend), node limit (bounded by backend), and relationship types. If server-side relationship filtering is added, validate/whitelist types.
-- [ ] Encode edge kind distinctly: at minimum different line style/color and legend labels for `next_hop`, `ping`, `in_as`, `transits`, `targets`, and `located_at`. Use `GraphEdge.kind`; the current implementation discards it when forming ForceGraph links.
-- [ ] On node/edge selection, show a keyboard-accessible side/details panel with entity name, kind, ASN/org, metric values, relationship type/direction, and a relevant detail-page link.
-- [ ] Add a text/list alternative summarizing nodes and edges for accessibility and for users who do not need the force graph.
-- [ ] Before loading a large graph, show the requested bounded limits. Never remove existing backend clamps (`depth <= 4`, `limit <= 300`).
-- [ ] Remove or revise the backend’s implicit “most-connected AS” default seed; an empty seed should request user input or clearly announce the selected default before querying.
+- [x] Read `asn`, `target`, `probe`, `depth`, and `limit` from URL query parameters; initialize the existing seed controls from them.
+- [x] Add visible controls for depth (bounded by backend), node limit (bounded by backend), and relationship types. If server-side relationship filtering is added, validate/whitelist types.
+- [x] Encode edge kind distinctly: at minimum different line style/color and legend labels for `next_hop`, `ping`, `in_as`, `transits`, `targets`, and `located_at`. Use `GraphEdge.kind`; the current implementation discards it when forming ForceGraph links.
+- [x] On node/edge selection, show a keyboard-accessible side/details panel with entity name, kind, ASN/org, metric values, relationship type/direction, and a relevant detail-page link.
+- [x] Add a text/list alternative summarizing nodes and edges for accessibility and for users who do not need the force graph.
+- [x] Before loading a large graph, show the requested bounded limits. Never remove existing backend clamps (`depth <= 4`, `limit <= 300`).
+- [x] Remove or revise the backend’s implicit “most-connected AS” default seed; an empty seed should request user input or clearly announce the selected default before querying.
 
 **Acceptance criteria**
 

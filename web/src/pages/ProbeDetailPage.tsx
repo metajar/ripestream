@@ -30,9 +30,21 @@ export function ProbeDetailPage() {
           </Link>
         )}
       </div>
-      <div className="text-sm text-text-tertiary">
-        Source IP: <span className="font-mono text-text-secondary">{data.src_ip}</span>
-        {" · "}Last seen {fmtEpoch(data.last_seen)}
+
+      {/* What we see — plain-language summary */}
+      <div className="rounded-lg border border-border-primary bg-bg-secondary p-4">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-text-quaternary">What we see</h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          Probe <strong className="text-text-primary">{data.id}</strong> at{" "}
+          <span className="font-mono text-text-primary">{data.src_ip}</span>
+          {data.src_asn ? (
+            <> in {data.src_org || `AS${data.src_asn}`}</>
+          ) : null}{" "}
+          measures <strong className="text-text-primary">{data.targets.length} {data.targets.length === 1 ? "target" : "targets"}</strong>.
+        </p>
+        <p className="mt-1 text-sm text-text-quaternary">
+          Source IP: <span className="font-mono">{data.src_ip}</span>. Last seen {fmtEpoch(data.last_seen)}.
+        </p>
       </div>
 
       <Card>

@@ -56,6 +56,21 @@ export function ASNDetailPage() {
         </Badge>
       </div>
 
+      {/* What we see — plain-language summary before the raw lists */}
+      <div className="rounded-lg border border-border-primary bg-bg-secondary p-4">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-text-quaternary">What we see</h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          {d.org || `AS${d.asn}`} is a <strong className="text-text-primary">destination AS</strong> with{" "}
+          <strong className="text-text-primary">{fmtPct(d.avg_loss_pct, 1)} average observed loss</strong>{" "}
+          across {fmtNum(d.lossy_edges)} lossy PING {d.lossy_edges === 1 ? "edge" : "edges"}.
+        </p>
+        <p className="mt-1 text-sm text-text-quaternary">
+          Scope: {fmtNum(d.probe_count)} {d.probe_count === 1 ? "probe" : "probes"},{" "}
+          {fmtNum(d.ip_count)} IPs, {fmtNum(d.target_count)} targets,{" "}
+          {fmtNum(d.transit_in + d.transit_out)} transit relationships.
+        </p>
+      </div>
+
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat label="Probes" value={fmtNum(d.probe_count)} />

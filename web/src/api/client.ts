@@ -104,6 +104,25 @@ export interface ASNDetail {
   lossy_edges: number;
 }
 
+// Issue mirrors internal/api.Issue: the unified evidence-backed anomaly schema.
+export interface Issue {
+  id: string;
+  kind: string;
+  severity: "critical" | "high" | "watch";
+  title: string;
+  summary: string;
+  loss_pct: number;
+  avg_rtt_ms?: number;
+  probe_count: number;
+  target_count?: number;
+  sample_count: number;
+  last_seen: number; // unix seconds
+  confidence: "high" | "medium" | "low";
+  href: string;
+  evidence: string[];
+  source: "detected" | "alert";
+}
+
 export interface ProbeInfo {
   id: number;
   src_ip: string;
@@ -258,8 +277,10 @@ export interface AlertRuleView {
 
 export const api = {
   overview: () => getWithMeta<Overview, OverviewMeta>("/api/overview"),
-  asnIssues: (role: "src" | "dst", limit = 20) =>
-    get<ASNIssue[]>(`/api/asn/issues?role=${role}&limit=${limit}`),
+  asnIssues: (role: "src" | "dst", limit = 20, sort = "impact", order = "desc", minProbes = 2) =>
+    get<ASNIssue[]>(
+      `/api/asn/issues?role=${role}&limit=${limit}&sort=${sort}&order=${order}&min_probes=${minProbes}`,
+    ),
   asnDetail: (asn: number) => get<ASNDetail>(`/api/asn/${asn}`),
   asnProbes: (asn: number, limit = 50) =>
     get<ProbeInfo[]>(`/api/asn/${asn}/probes?limit=${limit}`),
@@ -318,6 +339,12 @@ export const api = {
   alertsRules: () => get<AlertRuleView[]>("/api/alerts/rules"),
   search: (q: string, limit = 12) =>
     get<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  issues: (limit = 10, severity?: string) => {
+    const q = new URLSearchParams();
+    q.set("limit", String(limit));
+    if (severity) q.set("severity", severity);
+    return get<Issue[]>(`/api/issues?${q}`);
+  },
   reachableDestinations: (src: string) =>
     get<ReachableGroup[]>(`/api/path/destinations?src=${encodeURIComponent(src)}`),
 };

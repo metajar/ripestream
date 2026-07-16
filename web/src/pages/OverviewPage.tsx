@@ -1,28 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Globe2, Network, Satellite, Target } from "lucide-react";
+import { AlertTriangle, ArrowRight, ChevronDown } from "lucide-react";
 import { Link } from "react-router-dom";
-import { api } from "@/api/client";
+import { useState } from "react";
+import { api, type Issue } from "@/api/client";
 import { DataStatus, Evidence, SeverityBadge, severityFromLossPct } from "@/components/health";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ErrorState, LoadingState } from "@/components/ui/states";
-import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
-import { fmtNum, fmtPct, lossColor } from "@/lib/utils";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { fmtNum, fmtPct } from "@/lib/utils";
 
 export function OverviewPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["overview"],
-    queryFn: api.overview,
-  });
+  const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview });
+  const issues = useQuery({ queryKey: ["issues"], queryFn: () => api.issues(10) });
 
-  if (isLoading) return <LoadingState label="Loading internet overview…" />;
-  if (error) return <ErrorState message={(error as Error).message} />;
-  if (!data) return null;
-  const { data: o, meta } = data;
+  if (overview.isLoading) return <LoadingState label="Loading network health…" />;
+  if (overview.error) return <ErrorState message={(overview.error as Error).message} />;
+  if (!overview.data) return null;
+  const { data: o, meta } = overview.data;
 
   return (
     <div className="space-y-5">
-      {/* Header: title, freshness status, active alerts */}
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Network health</h1>
@@ -42,207 +40,253 @@ export function OverviewPage() {
         </Link>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi icon={Satellite} label="Probes" value={fmtNum(o.counts.probes)} />
-        <Kpi icon={Target} label="Targets" value={fmtNum(o.counts.targets)} />
-        <Kpi icon={Globe2} label="ASes" value={fmtNum(o.counts.ases)} />
-        <Kpi icon={Network} label="IPs" value={fmtNum(o.counts.ips)} />
-      </div>
+      {/* First: Needs attention queue */}
+      <NeedsAttention issues={issues} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Global loss composition */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>Loss Composition</CardTitle>
-            <Badge variant={o.global_loss.avg_loss_pct > 10 ? "danger" : "warning"}>
-              avg {fmtPct(o.global_loss.avg_loss_pct, 1)}
-            </Badge>
-          </CardHeader>
-          <CardContent>
-            <LossComposition
-              healthy={o.global_loss.healthy_edges}
-              lossy={o.global_loss.lossy_edges}
-              lost={o.global_loss.lost_edges}
-            />
-            <div className="mt-3 border-t border-border-primary pt-3 text-xs text-text-quaternary">
-              Across {fmtNum(o.counts.ping_edges)} active PING edges. Values reflect the latest
-              observed PING-edge state, not a historical time-window rate.
-            </div>
-          </CardContent>
-        </Card>
+      {/* Second: Health at a glance */}
+      <HealthAtAGlance overview={o} />
 
-        {/* Top dst AS issues */}
-        <ASIssuesCard
-          title="Top Problem Destinations"
-          subtitle="dst ASes by loss"
-          issues={o.top_dst_as}
-        />
-
-        {/* Top src AS issues */}
-        <ASIssuesCard
-          title="Top Problem Sources"
-          subtitle="src ASes by loss"
-          issues={o.top_src_as}
-        />
-      </div>
-
-      {/* Top AS pairs */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Lossiest AS Pairs</CardTitle>
-          <Link
-            to="/transit"
-            className="flex items-center gap-1 text-xs font-medium text-brand-300 hover:text-brand-500"
-          >
-            Transit view <ArrowRight className="h-3 w-3" />
-          </Link>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <THead>
-              <tr>
-                <Th>Source AS</Th>
-                <Th>Destination AS</Th>
-                <Th className="text-right">Samples</Th>
-                <Th className="text-right">Probes</Th>
-                <Th className="text-right">Avg Loss</Th>
-                <Th className="text-right">RTT</Th>
-              </tr>
-            </THead>
-            <TBody>
-              {o.top_as_pairs.map((p) => (
-                <Tr key={`${p.src_asn}-${p.dst_asn}`}>
-                  <Td>
-                    <ASLink asn={p.src_asn} org={p.src_org} />
-                  </Td>
-                  <Td>
-                    <ASLink asn={p.dst_asn} org={p.dst_org} />
-                  </Td>
-                  <Td className="text-right font-mono text-xs">{fmtNum(p.samples)}</Td>
-                  <Td className="text-right font-mono text-xs">{fmtNum(p.probes)}</Td>
-                  <Td className={`text-right font-mono text-xs font-medium ${lossColor(p.avg_loss_pct)}`}>
-                    {fmtPct(p.avg_loss_pct)}
-                  </Td>
-                  <Td className="text-right font-mono text-xs text-text-tertiary">
-                    {p.avg_rtt_ms >= 0 ? `${Math.round(p.avg_rtt_ms)}ms` : "—"}
-                  </Td>
-                </Tr>
-              ))}
-            </TBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {/* Third: Diagnose by pattern */}
+      <DiagnoseByPattern overview={o} />
     </div>
   );
 }
 
-function Kpi({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
+// ---- Needs attention --------------------------------------------------------
+
+function NeedsAttention({
+  issues,
+}: {
+  issues: ReturnType<typeof useQuery<Issue[]>>;
+}) {
   return (
-    <Card className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-bg-tertiary">
-          <Icon className="h-4 w-4 text-brand-300" />
-        </div>
-        <div>
-          <div className="text-lg font-semibold text-text-primary">{value}</div>
-          <div className="text-xs text-text-quaternary">{label}</div>
-        </div>
+    <section aria-labelledby="attention-heading">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 id="attention-heading" className="text-sm font-semibold text-text-primary">
+          Needs attention
+        </h2>
+        {issues.data && issues.data.length > 0 && (
+          <Badge variant="neutral">{issues.data.length}</Badge>
+        )}
       </div>
+      {issues.isLoading && <LoadingState label="Detecting issues…" />}
+      {issues.error && <ErrorState message={(issues.error as Error).message} />}
+      {issues.data && issues.data.length === 0 && (
+        <EmptyState
+          label="No issues meet the current evidence threshold"
+          hint="The network may be healthy, or issues lack sufficient probes/samples to rank."
+        />
+      )}
+      {issues.data && issues.data.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {issues.data.map((issue) => (
+            <IssueCard key={issue.id} issue={issue} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function IssueCard({ issue }: { issue: Issue }) {
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <SeverityBadge severity={severityFromLossPct(issue.loss_pct)} />
+          <h3 className="mt-1.5 text-sm font-medium text-text-primary">{issue.title}</h3>
+        </div>
+        {issue.source === "alert" && (
+          <Badge variant="danger">Alert</Badge>
+        )}
+      </div>
+      <p className="text-sm text-text-secondary">{issue.summary}</p>
+      <Evidence probes={issue.probe_count} samples={issue.sample_count} lastSeenSec={issue.last_seen} />
+      {issue.evidence.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-text-quaternary">
+          {issue.evidence.slice(0, 2).map((e, i) => (
+            <li key={i} className="flex gap-1.5">
+              <span className="text-text-quaternary">•</span> {e}
+            </li>
+          ))}
+        </ul>
+      )}
+      <Link
+        to={issue.href}
+        className="mt-auto flex items-center gap-1 text-xs font-medium text-brand-300 hover:text-brand-500"
+      >
+        Investigate <ArrowRight className="h-3 w-3" />
+      </Link>
     </Card>
   );
 }
 
-// LossComposition renders a stacked bar of healthy/lossy/lost PING edges, with
-// each segment width computed against the total (NOT value/value, which was the
-// prior bug that filled every bar to 100%). Each row shows both count and %.
-// When there are zero edges it renders an explicit no-data state.
-function LossComposition({ healthy, lossy, lost }: { healthy: number; lossy: number; lost: number }) {
-  const total = healthy + lossy + lost;
-  if (total === 0) {
-    return (
-      <div className="py-6 text-center text-sm text-text-quaternary">No active PING edges</div>
-    );
-  }
-  const seg = (n: number) => `${(n / total) * 100}%`;
-  const row = (label: string, n: number, color: string, def: string) => (
-    <div className="flex items-center justify-between gap-3">
-      <span className="flex items-center gap-2 text-sm text-text-secondary">
-        <span className={`inline-block h-2.5 w-2.5 rounded-sm ${color}`} aria-hidden />
-        {label}
-      </span>
-      <span className="font-mono text-xs text-text-tertiary">
-        {fmtNum(n)} <span className="text-text-quaternary">({fmtPct((n / total) * 100, 1)})</span>
-      </span>
-      <span className="sr-only">{def}</span>
-    </div>
-  );
+// ---- Health at a glance -----------------------------------------------------
+
+function HealthAtAGlance({ overview: o }: { overview: import("@/api/client").Overview }) {
+  const totalEdges = o.global_loss.healthy_edges + o.global_loss.lossy_edges + o.global_loss.lost_edges;
+  const [showCoverage, setShowCoverage] = useState(false);
+
   return (
-    <div className="space-y-3">
-      {/* Stacked composition bar: segment widths are fractions of the total. */}
-      <div
-        role="img"
-        aria-label={`Loss composition of ${total} active PING edges: ${healthy} healthy (${fmtPct(
-          (healthy / total) * 100,
-          1,
-        )}), ${lossy} lossy (${fmtPct((lossy / total) * 100, 1)}), ${lost} target lost (${fmtPct(
-          (lost / total) * 100,
-          1,
-        )}).`}
-        className="flex h-2.5 w-full overflow-hidden rounded-full bg-bg-tertiary"
+    <section aria-labelledby="health-heading">
+      <h2 id="health-heading" className="mb-2 text-sm font-semibold text-text-primary">
+        Health at a glance
+      </h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <HealthMetric
+          label="Affected edges"
+          value={fmtNum(o.global_loss.lossy_edges + o.global_loss.lost_edges)}
+          secondary={`of ${fmtNum(totalEdges)} active PING`}
+        />
+        <HealthMetric
+          label="Target-lost rate"
+          value={fmtPct(totalEdges > 0 ? (o.global_loss.lost_edges / totalEdges) * 100 : 0, 1)}
+          secondary={`${fmtNum(o.global_loss.lost_edges)} edges`}
+        />
+        <HealthMetric
+          label="Avg loss"
+          value={fmtPct(o.global_loss.avg_loss_pct, 1)}
+          secondary="across all PING edges"
+        />
+        <HealthMetric
+          label="Lossy edges"
+          value={fmtNum(o.global_loss.lossy_edges)}
+          secondary="0%–100% partial loss"
+        />
+      </div>
+
+      {/* Collapsible network coverage (inventory counts) */}
+      <button
+        type="button"
+        onClick={() => setShowCoverage(!showCoverage)}
+        className="mt-2 flex items-center gap-1 text-xs text-text-quaternary hover:text-text-secondary"
       >
-        <div className="h-full bg-success-500" style={{ width: seg(healthy) }} />
-        <div className="h-full bg-warning-500" style={{ width: seg(lossy) }} />
-        <div className="h-full bg-error-500" style={{ width: seg(lost) }} />
-      </div>
-      <div className="space-y-1.5">
-        {row("Healthy", healthy, "bg-success-500", "Healthy: 0% observed loss")}
-        {row("Lossy", lossy, "bg-warning-500", "Lossy: greater than 0% and less than 100% observed loss")}
-        {row("Target lost", lost, "bg-error-500", "Target lost: 100% observed loss")}
-      </div>
+        <ChevronDown className={`h-3 w-3 transition-transform ${showCoverage ? "rotate-180" : ""}`} />
+        Network coverage
+      </button>
+      {showCoverage && (
+        <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-border-primary bg-bg-secondary p-3 text-xs md:grid-cols-4">
+          <CoverageStat label="Probes" value={fmtNum(o.counts.probes)} />
+          <CoverageStat label="Targets" value={fmtNum(o.counts.targets)} />
+          <CoverageStat label="ASes" value={fmtNum(o.counts.ases)} />
+          <CoverageStat label="IPs" value={fmtNum(o.counts.ips)} />
+          <CoverageStat label="NEXT_HOP" value={fmtNum(o.counts.next_hop_edges)} />
+          <CoverageStat label="PING edges" value={fmtNum(o.counts.ping_edges)} />
+          <CoverageStat label="Transit" value={fmtNum(o.counts.transit_edges)} />
+          <CoverageStat label="Lossy PING" value={fmtNum(o.counts.lossy_pings)} />
+        </div>
+      )}
+      {showCoverage && (
+        <p className="mt-1 text-[11px] text-text-quaternary">
+          Graph inventory counts, not current health indicators.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function HealthMetric({ label, value, secondary }: { label: string; value: string; secondary: string }) {
+  return (
+    <Card className="px-4 py-3">
+      <div className="text-xs text-text-quaternary">{label}</div>
+      <div className="text-lg font-semibold text-text-primary">{value}</div>
+      <div className="text-[11px] text-text-quaternary">{secondary}</div>
+    </Card>
+  );
+}
+
+function CoverageStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-text-quaternary">{label}</span>
+      <span className="font-mono text-text-secondary">{value}</span>
     </div>
   );
 }
 
-function ASIssuesCard({ title, subtitle, issues }: { title: string; subtitle: string; issues: import("@/api/client").ASNIssue[] }) {
+// ---- Diagnose by pattern ----------------------------------------------------
+
+function DiagnoseByPattern({ overview: o }: { overview: import("@/api/client").Overview }) {
+  const dst = o.top_dst_as.slice(0, 5);
+  const src = o.top_src_as.slice(0, 5);
+  const pairs = o.top_as_pairs.slice(0, 5);
+
+  return (
+    <section aria-labelledby="pattern-heading">
+      <h2 id="pattern-heading" className="mb-2 text-sm font-semibold text-text-primary">
+        Diagnose by pattern
+      </h2>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <PatternCard
+          title="Destination-wide"
+          def="Many source networks failing to reach one destination AS."
+          issues={dst}
+          linkPrefix="/asn/"
+          linkKey="asn"
+        />
+        <PatternCard
+          title="Source-specific"
+          def="One source network failing across many destinations."
+          issues={src}
+          linkPrefix="/asn/"
+          linkKey="asn"
+        />
+        <PatternCard
+          title="AS pairs"
+          def="Loss concentrated on a specific source→destination AS pair."
+          issues={pairs}
+          linkPrefix="/transit/"
+          linkKey="pair"
+        />
+      </div>
+    </section>
+  );
+}
+
+function PatternCard({
+  title,
+  def,
+  issues,
+  linkPrefix,
+  linkKey,
+}: {
+  title: string;
+  def: string;
+  issues: (import("@/api/client").ASNIssue | import("@/api/client").ASNPairIssue)[];
+  linkPrefix: string;
+  linkKey: "asn" | "pair";
+}) {
   return (
     <Card>
       <CardHeader>
         <div>
           <CardTitle>{title}</CardTitle>
-          <p className="text-xs text-text-quaternary">{subtitle}</p>
+          <p className="text-xs text-text-quaternary">{def}</p>
         </div>
       </CardHeader>
       <CardContent>
-        <div className="space-y-1">
-          {issues.slice(0, 6).map((a) => (
-            <Link
-              key={a.asn}
-              to={`/asn/${a.asn}`}
-              className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-bg-tertiary"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-text-primary">{a.org || `AS${a.asn}`}</div>
-                <div className="text-xs text-text-quaternary">AS{a.asn}</div>
-                <Evidence probes={a.probes} samples={a.samples} />
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <SeverityBadge severity={severityFromLossPct(a.avg_loss_pct)} />
-                <span className="font-mono text-xs text-text-tertiary">{fmtPct(a.avg_loss_pct)}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
+        {issues.length === 0 ? (
+          <p className="py-3 text-center text-xs text-text-quaternary">No qualifying patterns</p>
+        ) : (
+          <div className="space-y-1">
+            {issues.map((a, i) => {
+              const asn = "asn" in a ? a.asn : 0;
+              const org = "org" in a ? a.org : "as_org" in a ? a.src_org : "";
+              const href = linkKey === "pair" && "src_asn" in a ? `/transit/${a.src_asn}/${a.dst_asn}` : `${linkPrefix}${asn}`;
+              return (
+                <Link
+                  key={i}
+                  to={href}
+                  className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-bg-tertiary"
+                >
+                  <span className="truncate text-sm text-text-secondary">{org || `AS${asn}`}</span>
+                  <span className="font-mono text-xs text-text-tertiary">{fmtPct(a.avg_loss_pct)}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
-  );
-}
-
-function ASLink({ asn, org }: { asn: number; org: string }) {
-  return (
-    <Link to={`/asn/${asn}`} className="text-text-primary hover:text-brand-300">
-      <span className="font-medium">{org || `AS${asn}`}</span>{" "}
-      <span className="text-xs text-text-quaternary">AS{asn}</span>
-    </Link>
   );
 }
