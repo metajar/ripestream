@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ripestr
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates wget \
+RUN apk add --no-cache ca-certificates rclone \
     && addgroup -S ripestream \
     && adduser -S -G ripestream ripestream \
     && mkdir -p /data \

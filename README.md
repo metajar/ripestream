@@ -90,11 +90,11 @@ several intervals to drain a large stale backlog without blocking ingestion.
 ## Dokploy production deployment
 
 Use `docker-compose.prod.yml` as the Compose file in Dokploy and define a strong
-`CLICKHOUSE_PASSWORD` plus `GEOLITE_DB_URL` in the Dokploy environment. The
-deployment builds the embedded React UI and Go service, downloads GeoLite2-ASN
-from Cloudflare object storage at container startup, runs the RIPE Atlas firehose
-ingestor, and starts private ClickHouse and FalkorDB services with persistent
-volumes.
+`CLICKHOUSE_PASSWORD` plus the private Cloudflare R2 credentials listed below in
+the Dokploy environment. The deployment builds the embedded React UI and Go
+service, downloads GeoLite2-ASN through R2's authenticated S3 API at container
+startup, runs the RIPE Atlas firehose ingestor, and starts private ClickHouse and
+FalkorDB services with persistent volumes.
 
 Only the Ripestream UI/API is published, at port `3000`. Point the Dokploy domain
 at the `ripestream` service on container port `8080` (or use the published port
@@ -104,27 +104,32 @@ To validate or run the production stack locally:
 
 ```bash
 CLICKHOUSE_PASSWORD='replace-me' \
-GEOLITE_DB_URL='https://assets.example.com/GeoLite2-ASN.mmdb' \
+R2_ACCOUNT_ID='your-cloudflare-account-id' \
+R2_ACCESS_KEY_ID='your-r2-access-key-id' \
+R2_SECRET_ACCESS_KEY='your-r2-secret-access-key' \
+R2_BUCKET='your-private-bucket' \
 docker compose -f docker-compose.prod.yml config
 ```
 
-The object must be the uncompressed `GeoLite2-ASN.mmdb` file. Configure these
-Dokploy variables:
+Upload the raw, uncompressed `GeoLite2-ASN.mmdb` file to the private R2 bucket,
+then configure these Dokploy variables:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `GEOLITE_DB_URL` | yes | HTTPS URL of the Cloudflare R2 object |
+| `R2_ACCOUNT_ID` | yes | Cloudflare account ID used to construct the R2 S3 endpoint |
+| `R2_ACCESS_KEY_ID` | yes | Access Key ID from an R2 Object Read API token |
+| `R2_SECRET_ACCESS_KEY` | yes | Secret Access Key from that R2 API token |
+| `R2_BUCKET` | yes | Private bucket containing the database |
+| `R2_OBJECT_KEY` | no | Object key; defaults to `GeoLite2-ASN.mmdb` |
+| `R2_JURISDICTION` | no | `default`, `eu`, or `fedramp`; defaults to `default` |
 | `GEOLITE_DB_SHA256` | no | Expected SHA-256 checksum; startup fails on mismatch |
-| `GEOLITE_DB_AUTHORIZATION` | no | Complete `Authorization` header value for a protected endpoint |
-| `GEOLITE_DB_CF_ACCESS_CLIENT_ID` | no | Cloudflare Access service-token client ID |
-| `GEOLITE_DB_CF_ACCESS_CLIENT_SECRET` | no | Cloudflare Access service-token client secret |
 
-For a private R2 custom domain protected by Cloudflare Access, set both Access
-service-token variables. For a public custom-domain object, only the URL is
-needed. Avoid an R2 presigned URL for this long-lived setting because it expires.
-The entrypoint downloads to a temporary file, optionally verifies it, atomically
-replaces the copy under the persistent `/data` volume, and only then starts the
-application. A download or validation failure prevents ingestion from starting.
+Do not set the displayed Cloudflare API token value in Dokploy; the S3 client
+uses only its generated Access Key ID and Secret Access Key. Scope the token to
+Object Read on this bucket. The entrypoint downloads to a temporary file,
+optionally verifies it, atomically replaces the copy under the persistent `/data`
+volume, and only then starts the application. An authentication, download, or
+validation failure prevents ingestion from starting.
 
 ## Web UI & API
 

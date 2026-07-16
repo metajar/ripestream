@@ -2,7 +2,31 @@
 
 set -eu
 
-: "${GEOLITE_DB_URL:?Set GEOLITE_DB_URL to the HTTPS URL of GeoLite2-ASN.mmdb}"
+: "${R2_ACCOUNT_ID:?Set R2_ACCOUNT_ID to the Cloudflare account ID}"
+: "${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID to the R2 Access Key ID}"
+: "${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY to the R2 Secret Access Key}"
+: "${R2_BUCKET:?Set R2_BUCKET to the private R2 bucket name}"
+: "${R2_OBJECT_KEY:?Set R2_OBJECT_KEY to the GeoLite2-ASN.mmdb object key}"
+
+case "$R2_ACCOUNT_ID" in
+    ''|*[!a-fA-F0-9]*)
+        echo "R2_ACCOUNT_ID must be the hexadecimal Cloudflare account ID" >&2
+        exit 1
+        ;;
+esac
+
+case "${R2_JURISDICTION:-default}" in
+    default)
+        r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        ;;
+    eu|fedramp)
+        r2_endpoint="https://${R2_ACCOUNT_ID}.${R2_JURISDICTION}.r2.cloudflarestorage.com"
+        ;;
+    *)
+        echo "R2_JURISDICTION must be default, eu, or fedramp" >&2
+        exit 1
+        ;;
+esac
 
 destination="${GEOLITE_DB_PATH:-/data/geolite/GeoLite2-ASN.mmdb}"
 destination_dir="$(dirname "$destination")"
@@ -13,28 +37,19 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-if [ -n "${GEOLITE_DB_CF_ACCESS_CLIENT_ID:-}" ] || [ -n "${GEOLITE_DB_CF_ACCESS_CLIENT_SECRET:-}" ]; then
-    : "${GEOLITE_DB_CF_ACCESS_CLIENT_ID:?Set both Cloudflare Access service-token values or neither}"
-    : "${GEOLITE_DB_CF_ACCESS_CLIENT_SECRET:?Set both Cloudflare Access service-token values or neither}"
-fi
-
 mkdir -p "$destination_dir"
 
-echo "Downloading GeoLite2-ASN database"
+echo "Downloading GeoLite2-ASN database from private Cloudflare R2 bucket"
 download_database() {
-    set -- wget --https-only --quiet --output-document "$temporary"
+    export RCLONE_CONFIG_R2_TYPE=s3
+    export RCLONE_CONFIG_R2_PROVIDER=Cloudflare
+    export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+    export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+    export RCLONE_CONFIG_R2_ENDPOINT="$r2_endpoint"
+    export RCLONE_CONFIG_R2_REGION=auto
 
-    if [ -n "${GEOLITE_DB_CF_ACCESS_CLIENT_ID:-}" ]; then
-        set -- "$@" \
-            --header "CF-Access-Client-Id: ${GEOLITE_DB_CF_ACCESS_CLIENT_ID}" \
-            --header "CF-Access-Client-Secret: ${GEOLITE_DB_CF_ACCESS_CLIENT_SECRET}"
-    fi
-
-    if [ -n "${GEOLITE_DB_AUTHORIZATION:-}" ]; then
-        set -- "$@" --header "Authorization: ${GEOLITE_DB_AUTHORIZATION}"
-    fi
-
-    "$@" "$GEOLITE_DB_URL"
+    object_key="${R2_OBJECT_KEY#/}"
+    rclone copyto --quiet "r2:${R2_BUCKET}/${object_key}" "$temporary"
 }
 
 download_database
