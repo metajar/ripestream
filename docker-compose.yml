@@ -22,6 +22,22 @@ services:
       retries: 12
     restart: unless-stopped
 
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: ripestream-falkordb
+    ports:
+      - "6379:6379"  # Redis protocol (falkordb-go)
+      - "3000:3000"  # FalkorDB Browser UI
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   clickhouse-data:
   clickhouse-logs:
+  falkordb-data:

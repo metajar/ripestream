@@ -3,3 +3,6 @@
 /dist/
 *.log
 .DS_Store
+# MaxMind GeoLite2 databases (do not redistribute)
+geolite/*.mmdb
+*.mmdb

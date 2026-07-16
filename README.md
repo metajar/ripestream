@@ -1,19 +1,19 @@
 # ripestream
 
-A small Go service that reads the **RIPE Atlas** live result stream and writes the
-results into **ClickHouse**.
+A small Go service that reads the **RIPE Atlas** live result stream and writes
+results into **ClickHouse** (full history) and **FalkorDB** (live topology graph).
 
 By default it subscribes to the full public *firehose* — every measurement result
 RIPE Atlas publishes, across all measurement types (ping, traceroute, dns, http,
-sslcert, ntp, …). Each result is stored with a small set of common typed columns
-plus the **complete original payload as JSON**, so the same single table works for
-every measurement type and nothing is lost.
+sslcert, ntp, …). Every result is stored in ClickHouse with typed envelope columns
+plus the **complete original payload as JSON**. Traceroute and ping also update a
+FalkorDB graph you can traverse when investigating public-internet issues.
 
 ## How it works
 
 ```
-RIPE Atlas stream ──NDJSON──▶  ripestream  ──batched INSERT (JSONEachRow)──▶  ClickHouse
- https://atlas-stream.ripe.net                                            atlas_results
+RIPE Atlas stream ──NDJSON──▶  ripestream ──tee──▶ ClickHouse (atlas_results)
+ https://atlas-stream.ripe.net                  └─▶ FalkorDB (ripestream graph)
 ```
 
 - **Reader** (`internal/atlas`): opens the streaming endpoint, parses each line
@@ -21,17 +21,30 @@ RIPE Atlas stream ──NDJSON──▶  ripestream  ──batched INSERT (JSONE
   It auto-reconnects with capped exponential backoff and force-reconnects silent
   (low-volume) connections after an idle timeout. Each subscription filter gets
   its own connection; empty filters = the firehose.
-- **Writer** (`internal/store`): batches records and inserts them as
-  `JSONEachRow` over ClickHouse's HTTP interface (no driver dependency, stdlib
-  only). Flushes at `--batch-size` rows or every `--flush-interval`, retries
-  transient failures, and flushes a final batch on graceful shutdown.
-- **Schema** (`schema.sql`): typed envelope columns + a `result_json String`
-  column holding the verbatim payload, partitioned by day, ordered by
-  `(type, msm_id, prb_id, timestamp)`.
+- **Tee** (`internal/pipeline`): fans each record to both sinks without blocking
+  the firehose (drops for a full sink channel only).
+- **ClickHouse writer** (`internal/store`): batches records and inserts them as
+  `JSONEachRow` over HTTP. Flushes at `--batch-size` or `--flush-interval`.
+- **FalkorDB writer** (`internal/graph`): filters to traceroute + ping, extracts
+  hop paths / RTT health, and batch-`MERGE`s nodes and edges into a hybrid IP/ASN
+  graph.
+- **Schema** (`schema.sql`): ClickHouse envelope + `result_json`, applied on startup.
 
-The firehose mixes types, so type-specific fields (per-packet RTTs, hop lists,
-DNS answers, …) are **not** promoted to columns — they live in `result_json` and
-are read with ClickHouse's `JSONExtract*` functions (or materialized views).
+## Graph model (FalkorDB)
+
+| Kind | Pattern | Source |
+| --- | --- | --- |
+| Nodes | `(:Probe {id})`, `(:IP {addr, af, asn?, last_seen})`, `(:AS {asn})` | traceroute / ping |
+| Path | `(:IP)-[:NEXT_HOP {last_rtt_ms, last_seen, proto, seen_count}]->(:IP)` | traceroute |
+| Framing | `(:Probe)-[:LOCATED_AT]->(:IP)`, `(:Probe)-[:TARGETS]->(:IP)` | traceroute |
+| Health | `(:Probe)-[:PING {avg_rtt_ms, loss_ratio, …}]->(:IP)` | ping |
+| ASN overlay | `(:IP)-[:IN_AS]->(:AS)`, `(:AS)-[:TRANSITS]->(:AS)` | when `asn` is set |
+
+Timeout hops (`*`) are skipped; consecutive responsive hops still get a
+`NEXT_HOP` edge across the gap. Hop and endpoint IPs are enriched with ASN +
+organization from a local GeoLite2-ASN MaxMind DB (`--asn-db`, default
+`geolite/GeoLite2-ASN.mmdb`), which populates `IP.asn`, `(:AS {asn, org})`,
+`IN_AS`, and `TRANSITS` edges between consecutive hops in different ASes.
 
 ## Build
 
@@ -43,24 +56,30 @@ Requires Go 1.21+ (uses `log/slog`, `embed`, `signal.NotifyContext`).
 
 ## Run
 
-You need a ClickHouse reachable over HTTP. Quick local one:
+Start local ClickHouse + FalkorDB:
 
 ```bash
-docker run -d --name ripestream-ch -p 8123:8123 -p 9000:9000 \
-  clickhouse/clickhouse-server:24.8
+docker compose up -d
 ```
 
 Then:
 
 ```bash
-# firehose: ingest all public results
-./ripestream --clickhouse http://localhost:8123
+# firehose: ingest all public results into both sinks
+./ripestream --password ripestream
+
+# ClickHouse only
+./ripestream --password ripestream --falkor-enabled=false
 
 # or subscribe to specific measurements/probes (one connection each)
-./ripestream --msm 1001,1003 --prb 1,2
+./ripestream --password ripestream --msm 1001,1003 --prb 1,2
 ```
 
-The schema is applied automatically on startup (`--apply-schema`, idempotent).
+ClickHouse schema is applied automatically (`--apply-schema`). FalkorDB indexes
+on `IP.addr`, `Probe.id`, and `AS.asn` are ensured on startup. Place
+`GeoLite2-ASN.mmdb` under `geolite/` (or pass `--asn-db`) for ASN enrichment.
+
+FalkorDB Browser UI (compose): http://localhost:3000
 
 ### Flags
 
@@ -70,20 +89,25 @@ The schema is applied automatically on startup (`--apply-schema`, idempotent).
 | `--db` | `ripestream` | ClickHouse database |
 | `--table` | `atlas_results` | ClickHouse table |
 | `--user` / `--password` | `default` / _none_ | ClickHouse credentials |
+| `--falkor-enabled` | `true` | write traceroute/ping topology to FalkorDB |
+| `--falkor-addr` | `localhost:6379` | FalkorDB `host:port` |
+| `--falkor-graph` | `ripestream` | FalkorDB graph name |
+| `--falkor-password` | _none_ | FalkorDB password |
+| `--asn-db` | `geolite/GeoLite2-ASN.mmdb` | GeoLite2-ASN `.mmdb` path (empty disables enrichment) |
 | `--msm` | _empty_ | comma-separated measurement IDs (empty = firehose) |
 | `--prb` | _empty_ | comma-separated probe IDs |
 | `--stream-url` | `https://atlas-stream.ripe.net/api/v2/stream/` | stream endpoint |
-| `--batch-size` | `1000` | max rows per insert |
+| `--batch-size` | `1000` | max rows/ops per sink flush |
 | `--flush-interval` | `5s` | max time between flushes |
 | `--idle-timeout` | `5m` | reconnect a connection after this long with no data (0 disables) |
 | `--apply-schema` | `true` | apply `schema.sql` on startup |
 | `--log-level` | `info` | `debug`\|`info`\|`warn`\|`error` |
 
 Each flag also reads an env var of the same upper-snake-cased name prefixed with
-`RIPESTREAM_` (e.g. `RIPESTREAM_CLICKHOUSE`, `RIPESTREAM_MSM`,
+`RIPESTREAM_` (e.g. `RIPESTREAM_CLICKHOUSE`, `RIPESTREAM_FALKOR_ADDR`,
 `RIPESTREAM_PASSWORD`).
 
-## Schema
+## ClickHouse schema
 
 ```sql
 CREATE TABLE ripestream.atlas_results (
@@ -110,6 +134,8 @@ ORDER BY (type, msm_id, prb_id, timestamp);
 
 ## Example queries
 
+### ClickHouse
+
 ```sql
 -- volume by measurement type
 SELECT type, count() FROM ripestream.atlas_results GROUP BY type ORDER BY 2 DESC;
@@ -123,11 +149,44 @@ SELECT dst_addr, count() FROM ripestream.atlas_results
 WHERE type = 'traceroute' GROUP BY dst_addr ORDER BY 2 DESC LIMIT 10;
 ```
 
+### FalkorDB (Cypher)
+
+```cypher
+# Path between two IPs
+MATCH p = (a:IP {addr:$src})-[:NEXT_HOP*1..30]->(b:IP {addr:$dst})
+RETURN p LIMIT 5
+
+# Hot / recently seen edges near a target
+MATCH (x:IP)-[e:NEXT_HOP]->(t:IP {addr:$dst})
+WHERE e.last_seen > $since
+RETURN x.addr, e.last_rtt_ms, e.seen_count
+ORDER BY e.last_rtt_ms DESC LIMIT 50
+
+# Probe ping health to a destination
+MATCH (p:Probe)-[e:PING]->(t:IP {addr:$dst})
+WHERE e.loss_ratio > 0.2
+RETURN p.id, e.avg_rtt_ms, e.loss_ratio, e.last_seen
+
+# AS-level transit edges
+MATCH (a:AS)-[e:TRANSITS]->(b:AS)
+RETURN a.asn, a.org, b.asn, b.org, e.seen_count
+ORDER BY e.seen_count DESC LIMIT 50
+
+# IPs in an AS
+MATCH (ip:IP)-[:IN_AS]->(a:AS {asn:$asn})
+RETURN ip.addr, ip.last_seen LIMIT 100
+```
+
 ## Project layout
 
 ```
-main.go                  config, signal handling, orchestration
-schema.sql               ClickHouse DDL (embedded into the binary)
-internal/atlas/stream.go stream reader + reconnect/idle handling
-internal/store/store.go  batched ClickHouse HTTP writer
+main.go                      config, signal handling, dual-sink orchestration
+schema.sql                   ClickHouse DDL (embedded into the binary)
+docker-compose.yml           ClickHouse + FalkorDB
+geolite/GeoLite2-ASN.mmdb    MaxMind ASN DB (local; gitignored)
+internal/atlas/stream.go     stream reader + reconnect/idle handling
+internal/pipeline/tee.go     non-blocking fan-out to sinks
+internal/store/store.go      batched ClickHouse HTTP writer
+internal/graph/              FalkorDB traceroute/ping topology writer
+internal/asn/                GeoLite2-ASN lookup
 ```

@@ -1,11 +1,11 @@
 // Command ripestream reads the RIPE Atlas live result stream and writes the
-// results into ClickHouse.
+// results into ClickHouse and FalkorDB.
 //
 // By default it subscribes to the full public firehose (all measurement types:
 // ping, traceroute, dns, http, ...). Use --msm / --prb to subscribe to specific
-// measurements or probes; each value opens its own connection. The full payload
-// of every result is stored verbatim in the result_json column alongside a set
-// of common typed columns, so the schema works for every measurement type.
+// measurements or probes; each value opens its own connection. Every result is
+// stored verbatim in ClickHouse. Traceroute and ping also update a FalkorDB
+// topology graph (IP hops, probe framing, ping health).
 package main
 
 import (
@@ -20,7 +20,12 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
+	"ripestream/internal/asn"
 	"ripestream/internal/atlas"
+	"ripestream/internal/graph"
+	"ripestream/internal/pipeline"
 	"ripestream/internal/store"
 )
 
@@ -34,10 +39,15 @@ func main() {
 		chTable       = flag.String("table", envDefault("RIPESTREAM_TABLE", "atlas_results"), "ClickHouse table")
 		chUser        = flag.String("user", envDefault("RIPESTREAM_USER", "default"), "ClickHouse user")
 		chPass        = flag.String("password", os.Getenv("RIPESTREAM_PASSWORD"), "ClickHouse password")
+		falkorAddr    = flag.String("falkor-addr", envDefault("RIPESTREAM_FALKOR_ADDR", "localhost:6379"), "FalkorDB address host:port")
+		falkorGraph   = flag.String("falkor-graph", envDefault("RIPESTREAM_FALKOR_GRAPH", "ripestream"), "FalkorDB graph name")
+		falkorPass    = flag.String("falkor-password", os.Getenv("RIPESTREAM_FALKOR_PASSWORD"), "FalkorDB password")
+		falkorEnabled = flag.Bool("falkor-enabled", envBoolDefault("RIPESTREAM_FALKOR_ENABLED", true), "write traceroute/ping topology to FalkorDB")
+		asnDBPath     = flag.String("asn-db", envDefault("RIPESTREAM_ASN_DB", asn.DefaultDBPath), "GeoLite2-ASN .mmdb path (empty disables ASN enrichment)")
 		msmCSV        = flag.String("msm", envDefault("RIPESTREAM_MSM", ""), "comma-separated measurement IDs to subscribe to (empty = firehose)")
 		prbCSV        = flag.String("prb", envDefault("RIPESTREAM_PRB", ""), "comma-separated probe IDs to subscribe to")
 		streamURL     = flag.String("stream-url", atlas.DefaultBaseURL, "RIPE Atlas stream endpoint")
-		batchSize     = flag.Int("batch-size", 1000, "max rows per ClickHouse insert")
+		batchSize     = flag.Int("batch-size", 1000, "max rows/ops per sink flush")
 		flushInterval = flag.Duration("flush-interval", 5*time.Second, "max time between flushes")
 		idleTimeout   = flag.Duration("idle-timeout", 5*time.Minute, "reconnect a connection after this long with no data (0 disables)")
 		applySchema   = flag.Bool("apply-schema", true, "apply schema.sql on startup if true")
@@ -74,15 +84,74 @@ func main() {
 		}
 	}
 
+	var gs *graph.Store
+	var asnDB *asn.DB
+	if *falkorEnabled {
+		var lookup graph.LookupASN
+		if strings.TrimSpace(*asnDBPath) != "" {
+			db, err := asn.Open(*asnDBPath)
+			if err != nil {
+				slog.Warn("asn enrichment disabled (failed to open db)", "path", *asnDBPath, "err", err)
+			} else {
+				asnDB = db
+				lookup = db
+				slog.Info("asn enrichment enabled", "path", *asnDBPath)
+			}
+		}
+		if asnDB != nil {
+			defer asnDB.Close()
+		}
+
+		var err error
+		gs, err = graph.New(graph.Config{
+			Addr:     *falkorAddr,
+			Password: *falkorPass,
+			Graph:    *falkorGraph,
+			ASN:      lookup,
+		})
+		if err != nil {
+			slog.Error("failed to connect to falkordb", "err", err)
+			os.Exit(1)
+		}
+		if err := gs.Ping(ctx); err != nil {
+			slog.Error("falkordb ping failed", "err", err)
+			os.Exit(1)
+		}
+		if err := gs.EnsureIndexes(ctx); err != nil {
+			slog.Error("failed to ensure falkordb indexes", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	slog.Info("starting ripestream",
 		"sub", subSummary(params),
 		"clickhouse", *chURL, "db", *chDB, "table", *chTable,
+		"falkor_enabled", *falkorEnabled, "falkor_addr", *falkorAddr, "falkor_graph", *falkorGraph,
+		"asn_db", *asnDBPath,
 		"batch_size", *batchSize, "flush_interval", *flushInterval)
 
 	records := atlas.Subscribe(ctx, params, opts)
 
-	if err := st.Run(ctx, records, *batchSize, *flushInterval); err != nil &&
-		err != context.Canceled {
+	chIn := make(chan atlas.Record, 8192)
+	outs := []chan<- atlas.Record{chIn}
+	var graphIn chan atlas.Record
+	if gs != nil {
+		graphIn = make(chan atlas.Record, 8192)
+		outs = append(outs, graphIn)
+	}
+	pipeline.Tee(ctx, records, outs...)
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return st.Run(gctx, chIn, *batchSize, *flushInterval)
+	})
+	if gs != nil {
+		g.Go(func() error {
+			return gs.Run(gctx, graphIn, *batchSize, *flushInterval)
+		})
+	}
+
+	if err := g.Wait(); err != nil && err != context.Canceled {
 		slog.Error("writer exited with error", "err", err)
 		os.Exit(1)
 	}
@@ -152,4 +221,16 @@ func envDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBoolDefault(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
