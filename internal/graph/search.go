@@ -9,7 +9,7 @@ import (
 
 // Search returns autocomplete hits for a free-text query. It matches ASes by
 // organization name (case-insensitive substring) or ASN prefix, plus IPs by
-// address prefix and probes by id prefix.
+// address prefix and probes by ID prefix or cached RIPE Atlas description.
 //
 // AS hits are returned as a group carrying several concrete IPs (up to ipPerAS)
 // and a total count, so the Path Explorer can offer the operator a choice of
@@ -80,18 +80,36 @@ RETURN ip.addr AS addr, ip.asn AS asn, as.org AS org LIMIT $limit`,
 		}
 	}
 
-	// --- Probe by id prefix ---
-	if isNumericPrefix(query) {
+	// --- Probe by ID prefix or RIPE Atlas display name ---
+	if isNumericPrefix(query) || len(query) >= 2 {
+		probeWhere := "toLower(coalesce(p.display_name, '')) CONTAINS $lower"
+		if isNumericPrefix(query) {
+			probeWhere = "toString(p.id) STARTS WITH $q"
+		}
 		if prbRows, err := s.rows(ctx, `
-MATCH (p:Probe) WHERE toString(p.id) STARTS WITH $q
-OPTIONAL MATCH (p)-[:LOCATED_AT]->(ip:IP)
-OPTIONAL MATCH (ip)-[:IN_AS]->(as:AS)
-RETURN p.id AS id, ip.addr AS addr, as.asn AS asn, as.org AS org LIMIT $limit`,
-			map[string]any{"q": query, "limit": limit}); err == nil {
+MATCH (p:Probe) WHERE `+probeWhere+`
+RETURN p.id AS id, p.source_ip AS addr, p.source_asn AS asn, p.source_org AS org,
+       `+probeMetadataProjection+` LIMIT $limit`,
+			map[string]any{"q": query, "lower": lower, "limit": limit}); err == nil {
 			for _, r := range prbRows {
+				id := asInt(r["id"])
+				metadata := probeMetadataFromRow(r)
+				label := "Probe " + strconv.FormatInt(id, 10)
+				subParts := []string{label}
+				if metadata != nil {
+					if metadata.DisplayName != "" {
+						label = metadata.DisplayName
+					}
+					if metadata.ProbeType != "" {
+						subParts = append(subParts, metadata.ProbeType)
+					}
+					if metadata.CountryCode != "" {
+						subParts = append(subParts, metadata.CountryCode)
+					}
+				}
 				sr := SearchResult{
-					Kind: "probe", Label: "probe " + asString(r["id"]),
-					Sub: asString(r["addr"]),
+					Kind: "probe", Label: label, ProbeID: ptrIf(id, int64(0)),
+					Sub: strings.Join(subParts, " · "),
 				}
 				if addr := asString(r["addr"]); addr != "" {
 					sr.Addr = addr
@@ -198,6 +216,12 @@ func dedupeSearch(in []SearchResult) []SearchResult {
 				key += strconv.FormatInt(*h.ASN, 10)
 			} else {
 				key += h.Label
+			}
+		case "probe":
+			if h.ProbeID != nil {
+				key += strconv.FormatInt(*h.ProbeID, 10)
+			} else {
+				key += h.Addr
 			}
 		default:
 			key += h.Addr

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -8,6 +8,7 @@ import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { fmtEpoch, fmtNum, fmtRtt } from "@/lib/utils";
 
 export function TransitPage() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<"transit" | "hops">("transit");
   const transit = useQuery({ queryKey: ["transit-edges"], queryFn: () => api.transitEdges(100) });
   const hops = useQuery({ queryKey: ["hot-hops"], queryFn: () => api.hotHops(100, 100) });
@@ -60,7 +61,20 @@ export function TransitPage() {
                   </THead>
                   <TBody>
                     {transit.data.map((t, i) => (
-                      <Tr key={i}>
+                      <Tr
+                        key={i}
+                        role="link"
+                        tabIndex={0}
+                        aria-label={`View ${t.src_org || `AS${t.src_asn}`} to ${t.dst_org || `AS${t.dst_asn}`} relationship`}
+                        className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+                        onClick={() => navigate(`/transit/${t.src_asn}/${t.dst_asn}`)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            navigate(`/transit/${t.src_asn}/${t.dst_asn}`);
+                          }
+                        }}
+                      >
                         <Td>
                           <Link to={`/transit/${t.src_asn}/${t.dst_asn}`} className="hover:text-brand-300">
                             <span className="text-text-primary">{t.src_org || `AS${t.src_asn}`}</span>{" "}

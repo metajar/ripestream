@@ -167,8 +167,7 @@ function detailRoute(h: SearchResult): string | null {
     case "ip":
       return h.addr ? `/ip/${encodeURIComponent(h.addr)}` : null;
     case "probe":
-      // Probes are keyed by label "probe <id>".
-      return `/probe/${h.label.replace("probe ", "")}`;
+      return h.probe_id ? `/probe/${h.probe_id}` : null;
   }
   return null;
 }

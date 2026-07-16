@@ -4,35 +4,48 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 )
+
+const probeMetadataProjection = `p.display_name AS display_name, p.description AS description,
+       p.probe_type AS probe_type, p.country_code AS country_code,
+       p.latitude AS latitude, p.longitude AS longitude,
+       p.is_anchor AS is_anchor, p.is_public AS is_public,
+       p.firmware_version AS firmware_version, p.status_id AS status_id,
+       p.status_name AS status_name, p.status_since AS status_since,
+       p.first_connected AS first_connected, p.last_connected AS last_connected,
+       p.prefix_v4 AS prefix_v4, p.prefix_v6 AS prefix_v6,
+       p.asn_v4 AS asn_v4, p.asn_v6 AS asn_v6,
+       p.tag_slugs AS tag_slugs, p.metadata_updated_at AS metadata_updated_at`
 
 // ---- Overview ---------------------------------------------------------------
 
 func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	var o Overview
+	cutoff := s.activeCutoff()
 
 	// Counts are fetched as independent single-purpose queries. The original
 	// version chained them with WITH/count, which re-traverses the graph at each
 	// step and blows past FalkorDB's query timeout as the graph grows. These
 	// simple count() calls each complete in ~1ms.
 	o.Counts = OverviewCounts{
-		IPs:           s.countOne(ctx, "MATCH (n:IP) RETURN count(n)"),
-		Probes:        s.countOne(ctx, "MATCH (n:Probe) RETURN count(n)"),
-		ASes:          s.countOne(ctx, "MATCH (n:AS) RETURN count(n)"),
-		Targets:       s.countOne(ctx, "MATCH ()-[e:TARGETS]->() RETURN count(e)"),
-		NextHopEdges:  s.countOne(ctx, "MATCH ()-[e:NEXT_HOP]->() RETURN count(e)"),
-		PingEdges:     s.countOne(ctx, "MATCH ()-[e:PING]->() RETURN count(e)"),
-		TransitEdges:  s.countOne(ctx, "MATCH ()-[e:TRANSITS]->() RETURN count(e)"),
-		LossyPings:    s.countOne(ctx, "MATCH ()-[e:PING]->() WHERE e.loss_ratio > 0.2 AND e.sent > 0 RETURN count(e)"),
+		IPs:          s.countOne(ctx, "MATCH (n:IP) RETURN count(n)"),
+		Probes:       s.countOne(ctx, "MATCH (n:Probe) RETURN count(n)"),
+		ASes:         s.countOne(ctx, "MATCH (n:AS) RETURN count(n)"),
+		Targets:      s.countOne(ctx, "MATCH ()-[e:TARGETS]->() RETURN count(e)"),
+		NextHopEdges: s.countOne(ctx, "MATCH ()-[e:NEXT_HOP]->() RETURN count(e)"),
+		PingEdges:    s.countOne(ctx, "MATCH ()-[e:PING]->() RETURN count(e)"),
+		TransitEdges: s.countOne(ctx, "MATCH ()-[e:TRANSITS]->() RETURN count(e)"),
+		LossyPings:   s.countOneParams(ctx, "MATCH ()-[e:PING]->() WHERE e.loss_ratio > 0.2 AND e.sent > 0 AND e.last_seen >= $cutoff RETURN count(e)", map[string]any{"cutoff": cutoff}),
 	}
 
 	g, err := s.rows(ctx, `
-MATCH ()-[e:PING]->() WHERE e.sent > 0
+MATCH ()-[e:PING]->() WHERE e.sent > 0 AND e.last_seen >= $cutoff
 WITH count(CASE WHEN e.loss_ratio = 0 THEN 1 END) AS healthy,
      count(CASE WHEN e.loss_ratio > 0 AND e.loss_ratio < 1 THEN 1 END) AS lossy,
      count(CASE WHEN e.loss_ratio >= 1 THEN 1 END) AS lost,
-     avg(e.loss_ratio) AS avg_loss
-RETURN healthy, lossy, lost, avg_loss`, nil)
+     sum(e.sent) AS sent, sum(e.rcvd) AS rcvd
+RETURN healthy, lossy, lost, (1.0 * (sent - rcvd) / sent) AS avg_loss`, map[string]any{"cutoff": cutoff})
 	if err != nil {
 		// Best-effort: counts alone are still useful; don't fail the whole overview.
 		slog.Warn("overview: global loss query failed (serving counts only)", "err", err)
@@ -45,17 +58,22 @@ RETURN healthy, lossy, lost, avg_loss`, nil)
 	}
 
 	// AS rankings are best-effort too — a slow graph shouldn't blank the page.
-	if res, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "src", MinLoss: 0.1, Limit: 8}); err == nil {
+	// Default to empty (not nil) slices so a failed sub-query yields JSON `[]`
+	// rather than `null`, which the UI can always .slice()/map over safely.
+	o.TopSrcAS = []ASNIssue{}
+	o.TopDstAS = []ASNIssue{}
+	o.TopASPairs = []ASNPairIssue{}
+	if res, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "src", MinLoss: 0.1, MinProbes: 3, Limit: 8}); err == nil {
 		o.TopSrcAS = res
 	} else {
 		slog.Warn("overview: src AS issues query failed", "err", err)
 	}
-	if res, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "dst", MinLoss: 0.1, Limit: 8}); err == nil {
+	if res, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "dst", MinLoss: 0.1, MinProbes: 3, MinSourceASes: 2, Limit: 8}); err == nil {
 		o.TopDstAS = res
 	} else {
 		slog.Warn("overview: dst AS issues query failed", "err", err)
 	}
-	if res, err := s.ASNPairIssues(ctx, ASNPairFilter{MinLoss: 0.2, Limit: 8}); err == nil {
+	if res, err := s.ASNPairIssues(ctx, ASNPairFilter{MinLoss: 0.2, MinProbes: 2, Limit: 8}); err == nil {
 		o.TopASPairs = res
 	} else {
 		slog.Warn("overview: AS pair issues query failed", "err", err)
@@ -66,7 +84,11 @@ RETURN healthy, lossy, lost, avg_loss`, nil)
 // countOne runs a single-row count query and returns the integer, tolerating
 // errors (returns 0) so one slow/failed count can't abort the whole overview.
 func (s *Store) countOne(ctx context.Context, cypher string) int64 {
-	rows, err := s.rows(ctx, cypher, nil)
+	return s.countOneParams(ctx, cypher, nil)
+}
+
+func (s *Store) countOneParams(ctx context.Context, cypher string, params map[string]any) int64 {
+	rows, err := s.rows(ctx, cypher, params)
 	if err != nil || len(rows) == 0 {
 		return 0
 	}
@@ -96,36 +118,59 @@ func (s *Store) ASNIssues(ctx context.Context, f ASNIssueFilter) ([]ASNIssue, er
 	if minProbes < 1 {
 		minProbes = 1
 	}
+	minSourceASes := f.MinSourceASes
+	if minSourceASes < 1 {
+		minSourceASes = 1
+	}
 
 	var q string
 	if role == "src" {
 		q = `
 MATCH (p:Probe)-[:LOCATED_AT]->(src:IP)-[:IN_AS]->(as:AS)
 MATCH (p)-[e:PING]->(t:IP)
-WHERE e.loss_ratio >= $minLoss AND e.sent > 0
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
 WITH as.asn AS asn, as.org AS org,
-     count(*) AS samples, avg(e.loss_ratio) AS avg_loss, max(e.loss_ratio) AS max_loss,
-     avg(e.avg_rtt_ms) AS avg_rtt, count(DISTINCT p.id) AS probes, max(e.last_seen) AS last_seen,
-     avg(e.loss_ratio) * count(DISTINCT p.id) AS impact
-WHERE probes >= $minProbes
+	 count(*) AS samples, sum(e.sent) AS sent, sum(e.rcvd) AS rcvd,
+	 max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt,
+	 count(DISTINCT p.id) AS probes, count(DISTINCT t.addr) AS targets,
+	 max(e.last_seen) AS last_seen
+WITH asn, org, samples, max_loss, avg_rtt, probes, targets, last_seen,
+	 (1.0 * (sent - rcvd) / sent) AS avg_loss
+WHERE probes >= $minProbes AND avg_loss >= $minLoss
+WITH asn, org, samples, avg_loss, max_loss, avg_rtt, probes, targets, last_seen,
+	 avg_loss * probes AS impact
 RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
-       round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms, probes, last_seen
+	   round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms,
+	   probes, 1 AS source_ases, targets, last_seen
 ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
-		} else {
-			q = `
+	} else {
+		q = `
+MATCH (p:Probe)-[allPing:PING]->()
+WHERE allPing.sent > 0 AND allPing.last_seen >= $cutoff
+WITH p, count(allPing) AS probe_targets, sum(allPing.sent) AS probe_sent, sum(allPing.rcvd) AS probe_rcvd
+WITH p, probe_targets, (1.0 * (probe_sent - probe_rcvd) / probe_sent) AS probe_loss
+WHERE probe_targets < $qualityTargets OR probe_loss < $maxProbeLoss
 MATCH (p:Probe)-[e:PING]->(t:IP)-[:IN_AS]->(as:AS)
-WHERE e.loss_ratio >= $minLoss AND e.sent > 0
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
 WITH as.asn AS asn, as.org AS org,
-     count(*) AS samples, avg(e.loss_ratio) AS avg_loss, max(e.loss_ratio) AS max_loss,
-     avg(e.avg_rtt_ms) AS avg_rtt, count(DISTINCT p.id) AS probes, max(e.last_seen) AS last_seen,
-     avg(e.loss_ratio) * count(DISTINCT p.id) AS impact
-WHERE probes >= $minProbes
+	 count(*) AS samples, sum(e.sent) AS sent, sum(e.rcvd) AS rcvd,
+	 max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt,
+	 count(DISTINCT p.id) AS probes, count(DISTINCT p.source_asn) AS source_ases,
+	 count(DISTINCT t.addr) AS targets, max(e.last_seen) AS last_seen
+WITH asn, org, samples, max_loss, avg_rtt, probes, source_ases, targets, last_seen,
+	 (1.0 * (sent - rcvd) / sent) AS avg_loss
+WHERE probes >= $minProbes AND source_ases >= $minSourceASes AND avg_loss >= $minLoss
+WITH asn, org, samples, avg_loss, max_loss, avg_rtt, probes, source_ases, targets, last_seen,
+	 avg_loss * probes AS impact
 RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
-       round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms, probes, last_seen
+	   round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms,
+	   probes, source_ases, targets, last_seen
 ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
 	}
 	rows, err := s.rows(ctx, q, map[string]any{
 		"minLoss": f.MinLoss, "limit": f.Limit, "minProbes": minProbes, "offset": f.Offset,
+		"cutoff": s.activeCutoff(), "qualityTargets": 3, "maxProbeLoss": 0.8,
+		"minSourceASes": minSourceASes,
 	})
 	if err != nil {
 		return nil, err
@@ -135,6 +180,7 @@ ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
 		out = append(out, ASNIssue{
 			ASN: asInt(r["asn"]), Org: asString(r["org"]), Role: role,
 			Samples: asInt(r["samples"]), Probes: asInt(r["probes"]),
+			SourceASes: asInt(r["source_ases"]), Targets: asInt(r["targets"]),
 			AvgLossPct: asFloat(r["avg_loss_pct"]), MaxLossPct: asFloat(r["max_loss_pct"]),
 			AvgRttMs: asFloat(r["avg_rtt_ms"]),
 			LastSeen: asInt(r["last_seen"]),
@@ -150,18 +196,26 @@ func (s *Store) ASNPairIssues(ctx context.Context, f ASNPairFilter) ([]ASNPairIs
 	if f.MinLoss <= 0 {
 		f.MinLoss = 0.2
 	}
+	minProbes := f.MinProbes
+	if minProbes < 1 {
+		minProbes = 1
+	}
 	rows, err := s.rows(ctx, `
 MATCH (p:Probe)-[:LOCATED_AT]->(src:IP)-[:IN_AS]->(srcAS:AS)
 MATCH (p)-[e:PING]->(t:IP)-[:IN_AS]->(dstAS:AS)
-WHERE e.loss_ratio >= $minLoss AND e.sent > 0
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
 WITH srcAS.asn AS sasn, srcAS.org AS sorg, dstAS.asn AS dasn, dstAS.org AS dorg,
-     count(*) AS samples, avg(e.loss_ratio) AS avg_loss, max(e.loss_ratio) AS max_loss,
-     avg(e.avg_rtt_ms) AS avg_rtt, count(DISTINCT p.id) AS probes, max(e.last_seen) AS last_seen
+     count(*) AS samples, sum(e.sent) AS sent, sum(e.rcvd) AS rcvd,
+     max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt,
+     count(DISTINCT p.id) AS probes, max(e.last_seen) AS last_seen
+WITH sasn, sorg, dasn, dorg, samples, max_loss, avg_rtt, probes, last_seen,
+     (1.0 * (sent - rcvd) / sent) AS avg_loss
+WHERE avg_loss >= $minLoss AND probes >= $minProbes
 RETURN sasn, sorg, dasn, dorg, samples,
        round(100.0*avg_loss) AS avg_loss_pct, round(100.0*max_loss) AS max_loss_pct,
        round(avg_rtt) AS avg_rtt_ms, probes, last_seen
 ORDER BY avg_loss DESC, samples DESC LIMIT $limit`,
-		map[string]any{"minLoss": f.MinLoss, "limit": f.Limit})
+		map[string]any{"minLoss": f.MinLoss, "minProbes": minProbes, "limit": f.Limit, "cutoff": s.activeCutoff()})
 	if err != nil {
 		return nil, err
 	}
@@ -231,8 +285,10 @@ RETURN tout, count(inc) AS tin`, p)
 	ls, _ := s.rows(ctx, `
 MATCH (p:Probe)-[e:PING]->(t:IP)-[:IN_AS]->(:AS {asn: $asn})
 WHERE e.sent > 0
-RETURN round(100.0*avg(e.loss_ratio)) AS avg_loss_pct,
-       count(CASE WHEN e.loss_ratio > 0.2 THEN 1 END) AS lossy`, p)
+WITH sum(e.sent) AS sent, sum(e.rcvd) AS rcvd,
+     count(CASE WHEN e.loss_ratio > 0.2 THEN 1 END) AS lossy
+RETURN CASE WHEN sent > 0 THEN round(100.0 * (sent - rcvd) / sent) ELSE 0 END AS avg_loss_pct,
+       lossy`, p)
 	if len(ls) > 0 {
 		d.AvgLossPct = asFloat(ls[0]["avg_loss_pct"])
 		d.LossyEdges = asInt(ls[0]["lossy"])
@@ -248,19 +304,16 @@ OPTIONAL MATCH (p)-[e:PING]->()
 WHERE e.sent > 0
 WITH p, src, as, avg(e.loss_ratio) AS avg_loss, avg(e.avg_rtt_ms) AS avg_rtt,
      max(src.last_seen) AS last_seen
-RETURN p.id AS id, src.addr AS src_ip, as.org AS org,
-       round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen
+RETURN p.id AS id, src.addr AS src_ip, as.asn AS asn, as.org AS org,
+       round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen,
+       `+probeMetadataProjection+`
 ORDER BY avg_loss DESC LIMIT $limit`, map[string]any{"asn": asn, "limit": limit})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ProbeInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, ProbeInfo{
-			ID: asInt(r["id"]), SrcIP: asString(r["src_ip"]), SrcASN: ptrIf(asn, int64(0)),
-			SrcOrg: asString(r["org"]), LossPct: asFloat(r["loss_pct"]),
-			AvgRttMs: asFloat(r["rtt"]), LastSeen: asInt(r["last_seen"]),
-		})
+		out = append(out, probeInfoFromRow(r))
 	}
 	return out, nil
 }
@@ -322,28 +375,47 @@ func (s *Store) Probes(ctx context.Context, f ProbeFilter) ([]ProbeInfo, error) 
 	if f.ASN > 0 {
 		return s.ASNProbes(ctx, f.ASN, f.Limit)
 	}
-	// Unscoped list: show the most lossy recent probes (the actionable set),
-	// rather than aggregating across every probe which times out on a large graph.
+	conditions := []string{"avg_loss > $minLoss"}
+	params := map[string]any{"limit": f.Limit, "cutoff": s.activeCutoff(), "minLoss": 0.2}
+	if country := strings.ToUpper(strings.TrimSpace(f.Country)); len(country) == 2 {
+		conditions = append(conditions, "p.country_code = $country")
+		params["country"] = country
+	}
+	switch strings.ToLower(strings.TrimSpace(f.Type)) {
+	case "anchor":
+		conditions = append(conditions, "p.is_anchor = true")
+	case "software":
+		conditions = append(conditions, "p.probe_type = 'Software probe'")
+	case "hardware":
+		conditions = append(conditions, "p.probe_type STARTS WITH 'Hardware'")
+	}
+	statusNames := map[string]string{
+		"connected": "Connected", "disconnected": "Disconnected",
+		"never connected": "Never Connected", "abandoned": "Abandoned", "written off": "Written Off",
+	}
+	if status, ok := statusNames[strings.ToLower(strings.TrimSpace(f.Status))]; ok {
+		conditions = append(conditions, "p.status_name = $status")
+		params["status"] = status
+	}
+	sortExpr := validatedSort(f.Sort, "avg_loss", probeSortExpr)
+	dir := sortDir(f.Order)
 	rows, err := s.rows(ctx, `
-MATCH (p:Probe)-[e:PING]->() WHERE e.sent > 0 AND e.loss_ratio > 0.2
-WITH p, avg(e.loss_ratio) AS avg_loss, avg(e.avg_rtt_ms) AS avg_rtt
-MATCH (p)-[:LOCATED_AT]->(src:IP)
-OPTIONAL MATCH (src)-[:IN_AS]->(as:AS)
-WITH p, src, as, avg_loss, avg_rtt, max(src.last_seen) AS last_seen
-RETURN p.id AS id, src.addr AS src_ip, as.asn AS asn, as.org AS org,
-       round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen
-ORDER BY avg_loss DESC, last_seen DESC LIMIT $limit`, map[string]any{"limit": f.Limit})
+MATCH (p:Probe)-[e:PING]->()
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
+WITH p, sum(e.sent) AS sent, sum(e.rcvd) AS rcvd,
+     avg(e.avg_rtt_ms) AS avg_rtt, max(e.last_seen) AS last_seen
+WITH p, avg_rtt, last_seen, (1.0 * (sent - rcvd) / sent) AS avg_loss
+WHERE `+strings.Join(conditions, " AND ")+`
+RETURN p.id AS id, p.source_ip AS src_ip, p.source_asn AS asn, p.source_org AS org,
+       round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen,
+       `+probeMetadataProjection+`
+ORDER BY `+sortExpr+` `+dir+`, last_seen DESC LIMIT $limit`, params)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ProbeInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, ProbeInfo{
-			ID: asInt(r["id"]), SrcIP: asString(r["src_ip"]),
-			SrcASN: ptrIf(asInt(r["asn"]), int64(0)), SrcOrg: asString(r["org"]),
-			LossPct: asFloat(r["loss_pct"]), AvgRttMs: asFloat(r["rtt"]),
-			LastSeen: asInt(r["last_seen"]),
-		})
+		out = append(out, probeInfoFromRow(r))
 	}
 	return out, nil
 }
@@ -353,7 +425,8 @@ func (s *Store) ProbeDetail(ctx context.Context, id int64) (ProbeDetail, error) 
 	rows, err := s.rows(ctx, `
 MATCH (p:Probe {id: $id})-[:LOCATED_AT]->(src:IP)
 OPTIONAL MATCH (src)-[:IN_AS]->(as:AS)
-RETURN src.addr AS src_ip, as.asn AS asn, as.org AS org, src.last_seen AS last_seen`,
+RETURN src.addr AS src_ip, as.asn AS asn, as.org AS org, src.last_seen AS last_seen,
+       `+probeMetadataProjection,
 		map[string]any{"id": id})
 	if err != nil {
 		return d, err
@@ -366,6 +439,7 @@ RETURN src.addr AS src_ip, as.asn AS asn, as.org AS org, src.last_seen AS last_s
 	d.SrcIP = asString(r["src_ip"])
 	d.SrcASN = ptrIf(asInt(r["asn"]), int64(0))
 	d.SrcOrg = asString(r["org"])
+	d.Metadata = probeMetadataFromRow(r)
 	d.LastSeen = asInt(r["last_seen"])
 
 	tgts, err := s.rows(ctx, `
@@ -398,18 +472,42 @@ func (s *Store) Targets(ctx context.Context, f TargetFilter) ([]TargetInfo, erro
 	if f.ASN > 0 {
 		return s.ASNTargets(ctx, f.ASN, f.Limit)
 	}
-	// Unscoped list: aggregating avg() over all 316K+ PING edges times out, so the
-	// default targets view shows the most lossy recent targets (the actionable
-	// set). Operators wanting full coverage drill into a specific ASN.
+	minProbes := f.MinProbes
+	if minProbes < 3 {
+		minProbes = 3
+	}
+	sortExpr := validatedSort(f.Sort, "impact", targetSortExpr)
+	dir := sortDir(f.Order)
+
+	// Qualify probes before calculating target health so a broadly failing probe
+	// cannot make every destination look down. Aggregate every recent observation
+	// from the remaining probes; filtering lossy edges before avg_loss would turn
+	// a mixed healthy/lossy target into a misleading 100% row.
 	rows, err := s.rows(ctx, `
-MATCH (p:Probe)-[e:PING]->(t:IP)
-WHERE e.sent > 0 AND e.loss_ratio > 0.2
+MATCH (p:Probe)-[allPing:PING]->()
+WHERE allPing.sent > 0 AND allPing.last_seen >= $cutoff
+WITH p, count(allPing) AS probe_targets, sum(allPing.sent) AS probe_sent,
+     sum(allPing.rcvd) AS probe_rcvd
+WITH p, probe_targets, (1.0 * (probe_sent - probe_rcvd) / probe_sent) AS probe_loss
+WHERE probe_targets < $qualityTargets OR probe_loss < $maxProbeLoss
+MATCH (p)-[e:PING]->(t:IP)
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
+WITH t, sum(e.sent) AS sent, sum(e.rcvd) AS rcvd, avg(e.avg_rtt_ms) AS avg_rtt,
+     count(DISTINCT p.id) AS probes, count(DISTINCT p.source_asn) AS source_ases,
+     max(e.last_seen) AS last_seen
+WITH t, avg_rtt, probes, source_ases, last_seen,
+     (1.0 * (sent - rcvd) / sent) AS avg_loss,
+     (1.0 * (sent - rcvd) / sent) * probes AS impact
+WHERE avg_loss > $minLoss AND probes >= $minProbes AND source_ases >= $minSourceASes
 OPTIONAL MATCH (t)-[:IN_AS]->(as:AS)
-WITH t, as, avg(e.loss_ratio) AS avg_loss, avg(e.avg_rtt_ms) AS avg_rtt,
-     count(DISTINCT p.id) AS probes, max(e.last_seen) AS last_seen
-RETURN t.addr AS addr, as.asn AS asn, as.org AS org, probes,
-       round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen
-ORDER BY avg_loss DESC, last_seen DESC LIMIT $limit`, map[string]any{"limit": f.Limit})
+WHERE as.asn = t.asn
+RETURN t.addr AS addr, as.asn AS asn, as.org AS org, probes, source_ases,
+       round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen, impact
+ORDER BY `+sortExpr+` `+dir+`, last_seen DESC LIMIT $limit`, map[string]any{
+		"limit": f.Limit, "cutoff": s.activeCutoff(), "minLoss": 0.2,
+		"minProbes": minProbes, "minSourceASes": 2,
+		"qualityTargets": 3, "maxProbeLoss": 0.8,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +515,7 @@ ORDER BY avg_loss DESC, last_seen DESC LIMIT $limit`, map[string]any{"limit": f.
 	for _, r := range rows {
 		out = append(out, TargetInfo{
 			Addr: asString(r["addr"]), ASN: ptrIf(asInt(r["asn"]), int64(0)),
-			Org: asString(r["org"]), Probes: asInt(r["probes"]),
+			Org: asString(r["org"]), Probes: asInt(r["probes"]), SourceASes: asInt(r["source_ases"]),
 			LossPct: asFloat(r["loss_pct"]), AvgRttMs: asFloat(r["rtt"]),
 			LastSeen: asInt(r["last_seen"]),
 		})
@@ -446,23 +544,17 @@ RETURN t.last_seen AS last_seen, as.asn AS asn, as.org AS org`,
 
 	probes, err := s.rows(ctx, `
 MATCH (p:Probe)-[e:PING]->(t:IP {addr: $addr})
-WHERE e.sent > 0
-OPTIONAL MATCH (p)-[:LOCATED_AT]->(src:IP)-[:IN_AS]->(as:AS)
-WITH p, src, as, e.loss_ratio AS loss, e.avg_rtt_ms AS rtt, e.last_seen AS ls
-RETURN p.id AS id, src.addr AS src_ip, as.asn AS asn, as.org AS org,
-       round(100.0*loss) AS loss_pct, round(rtt) AS rtt, ls
-ORDER BY loss DESC LIMIT 50`, map[string]any{"addr": addr})
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
+RETURN p.id AS id, p.source_ip AS src_ip, p.source_asn AS asn, p.source_org AS org,
+       round(100.0*e.loss_ratio) AS loss_pct, round(e.avg_rtt_ms) AS rtt,
+       e.last_seen AS last_seen, `+probeMetadataProjection+`
+ORDER BY e.loss_ratio DESC, e.last_seen DESC LIMIT 100`, map[string]any{"addr": addr, "cutoff": s.activeCutoff()})
 	if err != nil {
 		return d, err
 	}
 	d.Probes = make([]ProbeInfo, 0, len(probes))
 	for _, r := range probes {
-		d.Probes = append(d.Probes, ProbeInfo{
-			ID: asInt(r["id"]), SrcIP: asString(r["src_ip"]),
-			SrcASN: ptrIf(asInt(r["asn"]), int64(0)), SrcOrg: asString(r["org"]),
-			LossPct: asFloat(r["loss_pct"]), AvgRttMs: asFloat(r["rtt"]),
-			LastSeen: asInt(r["ls"]),
-		})
+		d.Probes = append(d.Probes, probeInfoFromRow(r))
 	}
 
 	// nearby hops: edges incident to this target's IP.
@@ -494,6 +586,42 @@ ORDER BY rtt DESC LIMIT $limit`,
 		return nil, err
 	}
 	return scanHotHops(rows), nil
+}
+
+// HopContexts enriches a bounded list of historically correlated hop IPs with
+// their live ASN identity and observed graph degree in one query.
+func (s *Store) HopContexts(ctx context.Context, addrs []string) (map[string]HopContext, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return map[string]HopContext{}, nil
+	}
+	if len(addrs) > 100 {
+		addrs = addrs[:100]
+	}
+	rows, err := s.rows(ctx, `
+MATCH (ip:IP)
+WHERE ip.addr IN $addrs
+OPTIONAL MATCH (ip)-[:IN_AS]->(as:AS)
+OPTIONAL MATCH (prev:IP)-[:NEXT_HOP]->(ip)
+WITH ip, as, count(DISTINCT prev) AS incoming
+OPTIONAL MATCH (ip)-[:NEXT_HOP]->(next:IP)
+RETURN ip.addr AS addr, as.asn AS asn, as.org AS org,
+       incoming, count(DISTINCT next) AS outgoing
+LIMIT 100`, map[string]any{"addrs": addrs})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]HopContext, len(rows))
+	for _, r := range rows {
+		addr := asString(r["addr"])
+		out[addr] = HopContext{
+			Addr: addr, ASN: ptrIf(asInt(r["asn"]), int64(0)), Org: asString(r["org"]),
+			Incoming: asInt(r["incoming"]), Outgoing: asInt(r["outgoing"]),
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) TransitEdges(ctx context.Context, f TransitFilter) ([]ASNTransitEdge, error) {
@@ -535,6 +663,7 @@ RETURN a.org AS sorg, b.org AS dorg, e.seen_count AS sc, e.last_seen AS ls`,
 	d.DstOrg = asString(r["dorg"])
 	d.SeenCount = asInt(r["sc"])
 	d.LastSeen = asInt(r["ls"])
+	d.Hops = []HotHop{}
 
 	// hops realizing this transit: NEXT_HOP edges whose endpoints are in A and B.
 	hops, err := s.rows(ctx, `
@@ -554,7 +683,41 @@ ORDER BY rtt DESC LIMIT 50`, map[string]any{"a": asnA, "b": asnB})
 			LastSeen: asInt(rr["ls"]),
 		})
 	}
+	d.Tests, err = s.TransitPairTests(ctx, asnA, asnB, 200)
+	if err != nil {
+		return d, err
+	}
 	return d, nil
+}
+
+func (s *Store) TransitPairTests(ctx context.Context, asnA, asnB int64, limit int) ([]TransitTest, error) {
+	limit = clampLimit(limit, 100, 500)
+	rows, err := s.rows(ctx, `
+MATCH (srcAS:AS {asn: $a})<-[:IN_AS]-(src:IP)<-[:LOCATED_AT]-(p:Probe)-[e:PING]->(t:IP)-[:IN_AS]->(dstAS:AS {asn: $b})
+WHERE e.sent > 0 AND e.last_seen >= $cutoff
+RETURN p.id AS probe_id, e.msm_id AS msm_id, src.addr AS source_ip, t.addr AS target_ip,
+       e.sent AS sent, e.rcvd AS received, round(100.0 * e.loss_ratio) AS loss_pct,
+       e.avg_rtt_ms AS avg_rtt_ms, e.min_rtt_ms AS min_rtt_ms, e.max_rtt_ms AS max_rtt_ms,
+       e.last_seen AS last_seen, `+probeMetadataProjection+`
+ORDER BY e.loss_ratio DESC, e.avg_rtt_ms DESC, e.last_seen DESC
+LIMIT $limit`, map[string]any{
+		"a": asnA, "b": asnB, "cutoff": s.activeCutoff(), "limit": limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TransitTest, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, TransitTest{
+			ProbeID: asInt(r["probe_id"]), ProbeMetadata: probeMetadataFromRow(r), MsmID: asInt(r["msm_id"]),
+			SourceIP: asString(r["source_ip"]), TargetIP: asString(r["target_ip"]),
+			Sent: asInt(r["sent"]), Received: asInt(r["received"]),
+			LossPct: asFloat(r["loss_pct"]), AvgRttMs: asFloat(r["avg_rtt_ms"]),
+			MinRttMs: asFloat(r["min_rtt_ms"]), MaxRttMs: asFloat(r["max_rtt_ms"]),
+			LastSeen: asInt(r["last_seen"]),
+		})
+	}
+	return out, nil
 }
 
 // ---- IP detail --------------------------------------------------------------
@@ -586,9 +749,10 @@ WITH a.addr AS fa, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
      aas.asn AS faasn, aas.org AS faorg
 RETURN fa, rtt, sc, ls, faasn, faorg
 ORDER BY rtt DESC LIMIT 50`, map[string]any{"addr": addr})
-	if err == nil {
-		d.InHops = scanHotHops(inRows)
+	if err != nil {
+		return d, err
 	}
+	d.InHops = scanHotHops(inRows)
 	outRows, err := s.rows(ctx, `
 MATCH (a:IP {addr: $addr})-[e:NEXT_HOP]->(b:IP)
 OPTIONAL MATCH (b)-[:IN_AS]->(bas:AS)
@@ -596,9 +760,10 @@ WITH b.addr AS ta, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
      bas.asn AS taasn, bas.org AS taorg
 RETURN ta, rtt, sc, ls, taasn, taorg
 ORDER BY rtt DESC LIMIT 50`, map[string]any{"addr": addr})
-	if err == nil {
-		d.OutHops = scanHotHops(outRows)
+	if err != nil {
+		return d, err
 	}
+	d.OutHops = scanHotHops(outRows)
 	return d, nil
 }
 
@@ -786,10 +951,18 @@ RETURN n.asn AS asn, n.org AS org`, map[string]any{"ids": ids})
 	}
 	prbRows, _ := s.rows(ctx, `
 MATCH (n:Probe) WHERE id(n) IN $ids
-RETURN n.id AS id`, map[string]any{"ids": ids})
+WITH n AS p
+RETURN p.id AS id, `+probeMetadataProjection, map[string]any{"ids": ids})
 	for _, r := range prbRows {
 		id := asString(r["id"])
-		sg.Nodes = append(sg.Nodes, GraphNode{ID: "P" + id, Kind: "probe", Label: "probe " + id})
+		metadata := probeMetadataFromRow(r)
+		label := "Probe " + id
+		if metadata != nil && metadata.DisplayName != "" {
+			label = metadata.DisplayName
+		}
+		sg.Nodes = append(sg.Nodes, GraphNode{
+			ID: "P" + id, Kind: "probe", Label: label, ProbeMetadata: metadata,
+		})
 	}
 
 	// Edges by type. Each query restricts both endpoints to the collected id set

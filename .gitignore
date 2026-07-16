@@ -13,3 +13,8 @@ web/node_modules/
 web/dist/
 web/tsconfig.tsbuildinfo
 
+# Local env / feature-flag overrides (keep .env.example tracked)
+web/.env
+web/.env.local
+web/.env.*.local
+

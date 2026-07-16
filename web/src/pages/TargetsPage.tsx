@@ -15,8 +15,14 @@ export function TargetsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-text-primary">Targets</h1>
-        <p className="text-sm text-text-quaternary">Currently experiencing loss (actionable set)</p>
+        <h1 className="text-lg font-semibold text-text-primary">Targets with new corroborated loss</h1>
+        <p className="text-sm text-text-quaternary">
+          Last 30 minutes versus the prior 24 hours · at least 3 probes across 2 source networks
+        </p>
+      </div>
+      <div className="rounded-lg border border-border-primary bg-bg-secondary px-4 py-3 text-xs text-text-tertiary">
+        Persistent non-responders and broadly failing probes are excluded. A 100% current value means none of the
+        included recent PING packets received a reply after the target previously had 20% loss or less.
       </div>
       <Card>
         <CardContent className="pt-4">
@@ -24,8 +30,8 @@ export function TargetsPage() {
           {error && <ErrorState message={(error as Error).message} />}
           {data && data.length === 0 && (
             <EmptyState
-              label="No targets with notable observed loss"
-              hint="No destination IP currently shows greater than 20% loss across recent PING edges. This may indicate a healthy network."
+              label="No new corroborated target regressions"
+              hint="Silent targets without a healthy historical baseline are intentionally excluded because non-response alone does not prove an outage."
             />
           )}
           {data && data.length > 0 && (
@@ -35,8 +41,11 @@ export function TargetsPage() {
                   <Th>Target</Th>
                   <Th>AS</Th>
                   <Th className="text-right">Probes</Th>
-                  <Th className="text-right">Loss</Th>
-                  <Th className="text-right">RTT</Th>
+                  <Th className="text-right">Source ASes</Th>
+                  <Th className="text-right">Current loss</Th>
+                  <Th className="text-right">24h baseline</Th>
+                  <Th className="text-right">Change</Th>
+                  <Th className="text-right">Avg RTT</Th>
                   <Th className="text-right">Last observed</Th>
                 </tr>
               </THead>
@@ -58,8 +67,15 @@ export function TargetsPage() {
                       )}
                     </Td>
                     <Td className="text-right font-mono text-xs">{fmtNum(t.probes)}</Td>
+                    <Td className="text-right font-mono text-xs">{fmtNum(t.source_ases ?? 0)}</Td>
                     <Td className={`text-right font-mono text-xs font-medium ${lossColor(t.loss_pct)}`}>
                       {fmtPct(t.loss_pct)}
+                    </Td>
+                    <Td className="text-right font-mono text-xs text-text-tertiary">
+                      {fmtPct(t.baseline_loss_pct)}
+                    </Td>
+                    <Td className="text-right font-mono text-xs text-error-500">
+                      +{fmtPct(t.loss_change_pct)}
                     </Td>
                     <Td className="text-right font-mono text-xs text-text-tertiary">{fmtRtt(t.avg_rtt_ms)}</Td>
                     <Td className="text-right font-mono text-xs text-text-tertiary">{fmtEpoch(t.last_seen)}</Td>

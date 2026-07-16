@@ -1,6 +1,23 @@
 package graph
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+func TestAsFloatRejectsNonFiniteValues(t *testing.T) {
+	for name, value := range map[string]float64{
+		"nan":     math.NaN(),
+		"pos_inf": math.Inf(1),
+		"neg_inf": math.Inf(-1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := asFloat(value); got != 0 {
+				t.Fatalf("asFloat(%s) = %v, want 0", name, got)
+			}
+		})
+	}
+}
 
 // TestASNIssueMapping verifies the row → ASNIssue mapping handles both populated
 // and nil/missing last_seen values (FalkorDB returns nil for missing aggregates).

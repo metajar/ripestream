@@ -25,14 +25,19 @@ type Config struct {
 	Password string
 	Graph    string // graph name, default ripestream
 	ASN      LookupASN
+	// ActiveWindow limits health reads to recent measurements. Topology can be
+	// retained longer without allowing stale probe results to look like a live
+	// internet incident.
+	ActiveWindow time.Duration
 }
 
 // Store is a FalkorDB client that batches topology upserts.
 type Store struct {
-	db    *falkordb.FalkorDB
-	graph *falkordb.Graph
-	name  string
-	asn   LookupASN
+	db           *falkordb.FalkorDB
+	graph        *falkordb.Graph
+	name         string
+	asn          LookupASN
+	activeWindow time.Duration
 }
 
 // New connects to FalkorDB and selects the named graph.
@@ -43,7 +48,23 @@ func New(cfg Config) (*Store, error) {
 	if cfg.Graph == "" {
 		cfg.Graph = "ripestream"
 	}
-	opt := &falkordb.ConnectionOption{Addr: cfg.Addr}
+	if cfg.ActiveWindow <= 0 {
+		cfg.ActiveWindow = 30 * time.Minute
+	}
+	// go-redis defaults ReadTimeout to 3s, which is SHORTER than the graph's
+	// server-side query timeout (readQueryTimeoutMS, 5s). Aggregate read queries
+	// over the live firehose graph regularly take 2–4s; without raising the
+	// socket read timeout the connection is abandoned with "i/o timeout" before
+	// the query returns a result (or its own server-side timeout). Set read/dial
+	// timeouts comfortably above the query timeout, and give the pool enough
+	// connections to keep reads from starving under write load.
+	opt := &falkordb.ConnectionOption{
+		Addr:         cfg.Addr,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		PoolSize:     20,
+	}
 	if cfg.Password != "" {
 		opt.Password = cfg.Password
 	}
@@ -52,7 +73,18 @@ func New(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("falkordb connect: %w", err)
 	}
 	g := db.SelectGraph(cfg.Graph)
-	return &Store{db: db, graph: g, name: cfg.Graph, asn: cfg.ASN}, nil
+	return &Store{
+		db: db, graph: g, name: cfg.Graph, asn: cfg.ASN,
+		activeWindow: cfg.ActiveWindow,
+	}, nil
+}
+
+func (s *Store) activeCutoff() int64 {
+	window := s.activeWindow
+	if window <= 0 {
+		window = 30 * time.Minute
+	}
+	return time.Now().Add(-window).Unix()
 }
 
 // EnsureIndexes creates range indexes used by MERGE lookups.
@@ -266,16 +298,16 @@ func (s *Store) appendTraceroute(r atlas.Record, b *batch) error {
 		fromASN, fromOrg := s.lookupASN(r.FromIP)
 		dstASN, dstOrg := s.lookupASN(r.DstAddr)
 		b.probes = append(b.probes, map[string]any{
-			"prb_id":    int64(r.PrbID),
-			"from_ip":   r.FromIP,
-			"dst_addr":  r.DstAddr,
-			"msm_id":    int64(r.MsmID),
-			"ts":        ts,
-			"af":        af,
-			"from_asn":  fromASN,
-			"from_org":  fromOrg,
-			"dst_asn":   dstASN,
-			"dst_org":   dstOrg,
+			"prb_id":   int64(r.PrbID),
+			"from_ip":  r.FromIP,
+			"dst_addr": r.DstAddr,
+			"msm_id":   int64(r.MsmID),
+			"ts":       ts,
+			"af":       af,
+			"from_asn": fromASN,
+			"from_org": fromOrg,
+			"dst_asn":  dstASN,
+			"dst_org":  dstOrg,
 		})
 	}
 	return nil
@@ -417,6 +449,7 @@ MERGE (a)-[e:TRANSITS]->(b)
 				located = append(located, map[string]any{
 					"prb_id": op["prb_id"], "from_ip": fromIP,
 					"ts": op["ts"], "af": op["af"],
+					"from_asn": fromASN, "from_org": fromOrg,
 				})
 				appendInAS(&inAS, fromIP, fromASN, fromOrg)
 			}
@@ -432,10 +465,18 @@ MERGE (a)-[e:TRANSITS]->(b)
 			q := `
 UNWIND $ops AS op
 MERGE (p:Probe {id: op.prb_id})
+SET p.last_seen = CASE WHEN coalesce(p.last_seen, 0) > op.ts THEN p.last_seen ELSE op.ts END
+SET p.source_ip = op.from_ip, p.source_asn = op.from_asn, p.source_org = op.from_org
+WITH p, op
+OPTIONAL MATCH (p)-[old:LOCATED_AT]->(oldSrc:IP)
+WHERE oldSrc.addr <> op.from_ip
+DELETE old
+WITH p, op
 MERGE (src:IP {addr: op.from_ip})
   ON CREATE SET src.af = op.af, src.last_seen = op.ts
-  ON MATCH SET src.last_seen = op.ts
-MERGE (p)-[:LOCATED_AT]->(src)
+  ON MATCH SET src.last_seen = CASE WHEN src.last_seen > op.ts THEN src.last_seen ELSE op.ts END
+MERGE (p)-[loc:LOCATED_AT]->(src)
+SET loc.last_seen = CASE WHEN coalesce(loc.last_seen, 0) > op.ts THEN loc.last_seen ELSE op.ts END
 `
 			if _, err := s.graph.Query(q, map[string]any{"ops": mapsToIface(located)}, nil); err != nil {
 				return fmt.Errorf("located_at upsert: %w", err)
@@ -445,6 +486,7 @@ MERGE (p)-[:LOCATED_AT]->(src)
 			q := `
 UNWIND $ops AS op
 MERGE (p:Probe {id: op.prb_id})
+SET p.last_seen = CASE WHEN coalesce(p.last_seen, 0) > op.ts THEN p.last_seen ELSE op.ts END
 MERGE (dst:IP {addr: op.dst_addr})
   ON CREATE SET dst.af = op.af, dst.last_seen = op.ts
   ON MATCH SET dst.last_seen = op.ts
@@ -464,6 +506,7 @@ MERGE (p)-[t:TARGETS]->(dst)
 		q := `
 UNWIND $ops AS op
 MERGE (p:Probe {id: op.prb_id})
+SET p.last_seen = CASE WHEN coalesce(p.last_seen, 0) > op.ts THEN p.last_seen ELSE op.ts END
 MERGE (t:IP {addr: op.dst})
   ON CREATE SET t.af = op.af, t.last_seen = op.ts
   ON MATCH SET t.last_seen = op.ts
@@ -496,6 +539,7 @@ MERGE (p)-[e:PING]->(t)
 			located = append(located, map[string]any{
 				"prb_id": op["prb_id"], "from_ip": from,
 				"ts": op["ts"], "af": op["af"],
+				"from_asn": fromASN, "from_org": fromOrg,
 			})
 			appendInAS(&inAS, from, fromASN, fromOrg)
 		}
@@ -503,10 +547,18 @@ MERGE (p)-[e:PING]->(t)
 			q = `
 UNWIND $ops AS op
 MERGE (p:Probe {id: op.prb_id})
+SET p.last_seen = CASE WHEN coalesce(p.last_seen, 0) > op.ts THEN p.last_seen ELSE op.ts END
+SET p.source_ip = op.from_ip, p.source_asn = op.from_asn, p.source_org = op.from_org
+WITH p, op
+OPTIONAL MATCH (p)-[old:LOCATED_AT]->(oldSrc:IP)
+WHERE oldSrc.addr <> op.from_ip
+DELETE old
+WITH p, op
 MERGE (src:IP {addr: op.from_ip})
   ON CREATE SET src.af = op.af, src.last_seen = op.ts
-  ON MATCH SET src.last_seen = op.ts
-MERGE (p)-[:LOCATED_AT]->(src)
+  ON MATCH SET src.last_seen = CASE WHEN src.last_seen > op.ts THEN src.last_seen ELSE op.ts END
+MERGE (p)-[loc:LOCATED_AT]->(src)
+SET loc.last_seen = CASE WHEN coalesce(loc.last_seen, 0) > op.ts THEN loc.last_seen ELSE op.ts END
 `
 			if _, err := s.graph.Query(q, map[string]any{"ops": mapsToIface(located)}, nil); err != nil {
 				return fmt.Errorf("ping located_at upsert: %w", err)

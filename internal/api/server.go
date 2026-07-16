@@ -84,6 +84,10 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 	go func() {
 		<-ctx.Done()
@@ -123,9 +127,11 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/ip/{addr}", s.ipDetail)
 
 	// Hops / Transit (UC3)
+	m.HandleFunc("GET /api/hops/commonality", s.hopCommonalities)
 	m.HandleFunc("GET /api/hops/hotspots", s.hotHops)
 	m.HandleFunc("GET /api/transit", s.transitEdges)
 	m.HandleFunc("GET /api/transit/{asnA}/{asnB}", s.transitPairDetail)
+	m.HandleFunc("GET /api/transit/{asnA}/{asnB}/series", s.transitPairSeries)
 
 	// Compete-with-TE views
 	m.HandleFunc("GET /api/path", s.path)

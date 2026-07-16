@@ -1,20 +1,9 @@
 import { QueryClient, QueryClientProvider, keepPreviousData } from "@tanstack/react-query";
-import { StrictMode } from "react";
+import { StrictMode, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
-import { OverviewPage } from "@/pages/OverviewPage";
-import { ASNsPage } from "@/pages/ASNsPage";
-import { ASNDetailPage } from "@/pages/ASNDetailPage";
-import { ProbesPage } from "@/pages/ProbesPage";
-import { ProbeDetailPage } from "@/pages/ProbeDetailPage";
-import { TargetsPage } from "@/pages/TargetsPage";
-import { TargetDetailPage } from "@/pages/TargetDetailPage";
-import { TransitPage } from "@/pages/TransitPage";
-import { TransitPairDetailPage } from "@/pages/TransitPairDetailPage";
-import { PathPage } from "@/pages/PathPage";
-import { TopologyPage } from "@/pages/TopologyPage";
-import { AlertsPage } from "@/pages/AlertsPage";
+import { FEATURES } from "@/lib/features";
 import "@/index.css";
 
 const queryClient = new QueryClient({
@@ -36,21 +25,35 @@ const router = createBrowserRouter([
     element: <AppShell />,
     errorElement: <RouteError />,
     children: [
-      { index: true, element: <OverviewPage /> },
-      { path: "asns", element: <ASNsPage /> },
-      { path: "asn/:asn", element: <ASNDetailPage /> },
-      { path: "probes", element: <ProbesPage /> },
-      { path: "probe/:id", element: <ProbeDetailPage /> },
-      { path: "targets", element: <TargetsPage /> },
-      { path: "target/:addr", element: <TargetDetailPage /> },
-      { path: "transit", element: <TransitPage /> },
-      { path: "transit/:asnA/:asnB", element: <TransitPairDetailPage /> },
-      { path: "path", element: <PathPage /> },
-      { path: "topology", element: <TopologyPage /> },
-      { path: "alerts", element: <AlertsPage /> },
+      { index: true, lazy: route(() => import("@/pages/OverviewPage"), "OverviewPage") },
+      { path: "asns", lazy: route(() => import("@/pages/ASNsPage"), "ASNsPage") },
+      { path: "asn/:asn", lazy: route(() => import("@/pages/ASNDetailPage"), "ASNDetailPage") },
+      { path: "probes", lazy: route(() => import("@/pages/ProbesPage"), "ProbesPage") },
+      { path: "probe/:id", lazy: route(() => import("@/pages/ProbeDetailPage"), "ProbeDetailPage") },
+      { path: "targets", lazy: route(() => import("@/pages/TargetsPage"), "TargetsPage") },
+      { path: "target/:addr", lazy: route(() => import("@/pages/TargetDetailPage"), "TargetDetailPage") },
+      { path: "ip/:addr", lazy: route(() => import("@/pages/IPDetailPage"), "IPDetailPage") },
+      { path: "transit", lazy: route(() => import("@/pages/TransitPage"), "TransitPage") },
+      { path: "correlation", lazy: route(() => import("@/pages/RouteCorrelationPage"), "RouteCorrelationPage") },
+      { path: "transit/:asnA/:asnB", lazy: route(() => import("@/pages/TransitPairDetailPage"), "TransitPairDetailPage") },
+      { path: "path", lazy: route(() => import("@/pages/PathPage"), "PathPage") },
+      { path: "topology", lazy: route(() => import("@/pages/TopologyPage"), "TopologyPage") },
+      // Alerting UI is behind a feature flag; the route is registered only
+      // when VITE_FEATURE_ALERTS=true. Direct navigation to /alerts otherwise
+      // falls through to the router's errorElement (RouteError / "not found").
+      ...(FEATURES.alerts
+        ? [{ path: "alerts", lazy: route(() => import("@/pages/AlertsPage"), "AlertsPage") }]
+        : []),
     ],
   },
 ]);
+
+function route(load: () => Promise<unknown>, name: string) {
+  return async () => {
+    const module = (await load()) as Record<string, ComponentType>;
+    return { Component: module[name] };
+  };
+}
 
 // RouteError is the top-level error boundary for the router. It catches render
 // errors and unmatched routes (404), showing a graceful message with a link

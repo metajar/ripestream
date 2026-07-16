@@ -3,9 +3,21 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// TargetBaseline is one target's packet-weighted historical PING aggregate.
+type TargetBaseline struct {
+	Target  string  `json:"target"`
+	Sent    int64   `json:"sent"`
+	Rcvd    int64   `json:"rcvd"`
+	Samples int64   `json:"samples"`
+	Probes  int64   `json:"probes"`
+	LossPct float64 `json:"loss_pct"`
+}
 
 // WindowSummary is the aggregate packet-loss and RTT picture over a time window,
 // scoped optionally to a target IP and/or probe. It returns counts (not just
@@ -14,21 +26,21 @@ import (
 // isn't enough history to compute it.
 type WindowSummary struct {
 	// Current window.
-	From         time.Time `json:"window_start"`
-	To           time.Time `json:"window_end"`
-	Sent         int64     `json:"sent"`          // total ping packets sent in window
-	Rcvd         int64     `json:"rcvd"`          // total received
-	Lost         int64     `json:"lost"`          // sent - rcvd
-	LossPct      float64   `json:"loss_pct"`      // 100 * lost / sent (0 if sent==0)
-	Samples      int64     `json:"samples"`       // number of ping results in window
-	AvgRttMs     float64   `json:"avg_rtt_ms"`    // mean RTT across received replies (0 if none)
-	MedianRttMs  float64   `json:"median_rtt_ms"` // approximate median RTT (0 if none)
+	From        time.Time `json:"window_start"`
+	To          time.Time `json:"window_end"`
+	Sent        int64     `json:"sent"`          // total ping packets sent in window
+	Rcvd        int64     `json:"rcvd"`          // total received
+	Lost        int64     `json:"lost"`          // sent - rcvd
+	LossPct     float64   `json:"loss_pct"`      // 100 * lost / sent (0 if sent==0)
+	Samples     int64     `json:"samples"`       // number of ping results in window
+	AvgRttMs    float64   `json:"avg_rtt_ms"`    // mean RTT across received replies (0 if none)
+	MedianRttMs float64   `json:"median_rtt_ms"` // approximate median RTT (0 if none)
 	// Baseline (prior equal-duration window).
-	BaselineAvailable bool     `json:"baseline_available"`
-	BaselineLossPct   float64  `json:"baseline_loss_pct"`
-	BaselineAvgRttMs  float64  `json:"baseline_avg_rtt_ms"`
-	ChangeLossPct     float64  `json:"change_loss_pct"`  // current - baseline (percentage points)
-	ChangeRttPct      float64  `json:"change_rtt_pct"`   // relative RTT change (%)
+	BaselineAvailable bool    `json:"baseline_available"`
+	BaselineLossPct   float64 `json:"baseline_loss_pct"`
+	BaselineAvgRttMs  float64 `json:"baseline_avg_rtt_ms"`
+	ChangeLossPct     float64 `json:"change_loss_pct"` // current - baseline (percentage points)
+	ChangeRttPct      float64 `json:"change_rtt_pct"`  // relative RTT change (%)
 }
 
 // maxWindowDays bounds the largest selectable window to avoid unbounded scans.
@@ -72,10 +84,78 @@ func (s *Store) PingWindowSummary(ctx context.Context, target string, probe int6
 		ws.BaselineAvgRttMs = base.avgRtt
 		ws.ChangeLossPct = ws.LossPct - ws.BaselineLossPct
 		if ws.BaselineAvgRttMs > 0 {
-			ws.ChangeRttPct = 100.0 * (ws.AvgRttMs-ws.BaselineAvgRttMs) / ws.BaselineAvgRttMs
+			ws.ChangeRttPct = 100.0 * (ws.AvgRttMs - ws.BaselineAvgRttMs) / ws.BaselineAvgRttMs
 		}
 	}
 	return ws, nil
+}
+
+// PingTargetBaselines aggregates a bounded target cohort in one ClickHouse
+// query. The caller chooses a completed historical window that does not overlap
+// the live graph window.
+func (s *Store) PingTargetBaselines(ctx context.Context, targets []string, from, to time.Time) (map[string]TargetBaseline, error) {
+	q, targetList, err := buildPingTargetBaselinesQuery(s.db, s.table, targets, from, to)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.QueryJSON(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]TargetBaseline, len(targetList))
+	for _, r := range rows {
+		target, _ := r["target"].(string)
+		if target == "" {
+			continue
+		}
+		baseline := TargetBaseline{
+			Target: target, Sent: toI(r["sent"]), Rcvd: toI(r["rcvd"]),
+			Samples: toI(r["samples"]), Probes: toI(r["probes"]),
+		}
+		if baseline.Sent > 0 {
+			baseline.LossPct = 100 * float64(baseline.Sent-baseline.Rcvd) / float64(baseline.Sent)
+		}
+		out[target] = baseline
+	}
+	return out, nil
+}
+
+func buildPingTargetBaselinesQuery(db, table string, targets []string, from, to time.Time) (string, []string, error) {
+	if !from.Before(to) {
+		return "", nil, fmt.Errorf("baseline start must be before end")
+	}
+	targetSet := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		if target != "" && len(targetSet) < 500 {
+			targetSet[target] = struct{}{}
+		}
+	}
+	targetList := make([]string, 0, len(targetSet))
+	for target := range targetSet {
+		targetList = append(targetList, target)
+	}
+	if len(targetList) == 0 {
+		return "", nil, fmt.Errorf("at least one target is required")
+	}
+	sort.Strings(targetList)
+	targetSQL := make([]string, len(targetList))
+	for i, target := range targetList {
+		targetSQL[i] = EscStr(target)
+	}
+
+	q := fmt.Sprintf(`
+SELECT dst_addr AS target,
+       sum(toInt64OrZero(JSONExtractString(result_json,'sent'))) AS sent,
+       sum(toInt64OrZero(JSONExtractString(result_json,'rcvd'))) AS rcvd,
+       count() AS samples,
+       uniqExact(prb_id) AS probes
+FROM %s.%s
+WHERE type = 'ping'
+  AND timestamp >= toDateTime(%d)
+  AND timestamp < toDateTime(%d)
+  AND dst_addr IN (%s)
+GROUP BY target`, db, table, from.Unix(), to.Unix(), strings.Join(targetSQL, ","))
+	return q, targetList, nil
 }
 
 // windowAgg holds the raw aggregate values from one window's ClickHouse query.

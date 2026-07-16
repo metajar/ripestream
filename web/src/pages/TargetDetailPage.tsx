@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { fmtPct, fmtRtt, lossColor } from "@/lib/utils";
+import { probeName, probeSubtitle } from "@/lib/probes";
 
 const CHART_COLORS = ["var(--color-chart-4)", "var(--color-chart-3)", "var(--color-chart-5)"];
 
@@ -151,8 +152,9 @@ export function TargetDetailPage() {
                 {d.probes.map((p) => (
                   <Tr key={p.id}>
                     <Td>
-                      <Link to={`/probe/${p.id}`} className="font-mono text-xs text-brand-300 hover:text-brand-500">
-                        {p.id}
+                      <Link to={`/probe/${p.id}`} className="text-xs text-brand-300 hover:text-brand-500">
+                        <span className="block">{probeName(p.id, p.metadata)}</span>
+                        <span className="font-mono text-[11px] text-text-quaternary">{probeSubtitle(p.id, p.metadata)}</span>
                       </Link>
                     </Td>
                     <Td>

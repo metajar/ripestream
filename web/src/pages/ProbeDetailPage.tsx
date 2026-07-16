@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
+import { probeName } from "@/lib/probes";
 import { fmtEpoch, fmtPct, fmtRtt, lossColor } from "@/lib/utils";
 
 export function ProbeDetailPage() {
@@ -22,8 +23,10 @@ export function ProbeDetailPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <h1 className="text-lg font-semibold text-text-primary">Probe {data.id}</h1>
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-lg font-semibold text-text-primary">{probeName(data.id, data.metadata)}</h1>
+        <Badge>Probe {data.id}</Badge>
+        {data.metadata?.probe_type && <Badge variant="info">{data.metadata.probe_type}</Badge>}
         {data.src_asn && (
           <Link to={`/asn/${data.src_asn}`}>
             <Badge variant="brand">{data.src_org || `AS${data.src_asn}`}</Badge>
@@ -35,7 +38,7 @@ export function ProbeDetailPage() {
       <div className="rounded-lg border border-border-primary bg-bg-secondary p-4">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-text-quaternary">What we see</h2>
         <p className="mt-1 text-sm text-text-secondary">
-          Probe <strong className="text-text-primary">{data.id}</strong> at{" "}
+          <strong className="text-text-primary">{probeName(data.id, data.metadata)}</strong> at{" "}
           <span className="font-mono text-text-primary">{data.src_ip}</span>
           {data.src_asn ? (
             <> in {data.src_org || `AS${data.src_asn}`}</>
@@ -46,6 +49,29 @@ export function ProbeDetailPage() {
           Source IP: <span className="font-mono">{data.src_ip}</span>. Last seen {fmtEpoch(data.last_seen)}.
         </p>
       </div>
+
+      {data.metadata && (
+        <Card>
+          <CardHeader><CardTitle>RIPE Atlas probe details</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 text-xs md:grid-cols-4">
+              <Meta label="Type" value={data.metadata.probe_type} />
+              <Meta label="Location" value={data.metadata.country_code || "Unknown"} />
+              <Meta label="Status" value={data.metadata.status_name || "Unknown"} />
+              <Meta label="Firmware" value={data.metadata.firmware_version ? String(data.metadata.firmware_version) : "Unknown"} />
+              <Meta label="First connected" value={fmtEpoch(data.metadata.first_connected)} />
+              <Meta label="Last connected" value={fmtEpoch(data.metadata.last_connected)} />
+              <Meta label="IPv4 prefix" value={data.metadata.prefix_v4 || "—"} mono />
+              <Meta label="IPv6 prefix" value={data.metadata.prefix_v6 || "—"} mono />
+            </div>
+            {data.metadata.description && <p className="text-xs text-text-tertiary">{data.metadata.description}</p>}
+            {(data.metadata.latitude || data.metadata.longitude) && (
+              <p className="text-xs text-text-quaternary">Approximate coordinates: {data.metadata.latitude?.toFixed(3)}, {data.metadata.longitude?.toFixed(3)}; RIPE Atlas obscures probe coordinates for privacy.</p>
+            )}
+            {data.metadata.tags && data.metadata.tags.length > 0 && <div className="flex flex-wrap gap-1">{data.metadata.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -92,4 +118,8 @@ export function ProbeDetailPage() {
       </Card>
     </div>
   );
+}
+
+function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return <div><div className="text-text-quaternary">{label}</div><div className={`mt-1 text-text-secondary ${mono ? "font-mono" : ""}`}>{value}</div></div>;
 }

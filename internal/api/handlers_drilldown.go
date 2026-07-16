@@ -4,6 +4,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
+
+	"ripestream/internal/graph"
+	"ripestream/internal/store"
 )
 
 // ---- ASN drill-down (UC2) ---------------------------------------------------
@@ -88,13 +92,86 @@ func (s *Server) probeDetail(w http.ResponseWriter, r *http.Request) {
 // ---- Targets (UC2) ----------------------------------------------------------
 
 func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
-	out, err := s.graph.Targets(r.Context(), targetFilterFromQuery(r))
+	filter := targetFilterFromQuery(r)
+	requested := filter.Limit
+	if requested <= 0 {
+		requested = 50
+	}
+	if requested > 100 {
+		requested = 100
+	}
+	// Pull a wider live candidate set before baseline filtering so persistent
+	// non-responders cannot crowd new regressions out of the requested page.
+	filter.Limit = 500
+	candidates, err := s.graph.Targets(r.Context(), filter)
 	if err != nil {
 		slog.Warn("targets query failed", "err", err)
 		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondOK(w, out)
+	if s.ch == nil {
+		respondError(w, http.StatusServiceUnavailable, "historical store unavailable")
+		return
+	}
+	targets := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		targets = append(targets, candidate.Addr)
+	}
+	if len(targets) == 0 {
+		respondOK(w, []targetIssueView{})
+		return
+	}
+	baselineTo := time.Now().UTC().Add(-30 * time.Minute)
+	baselines, err := s.ch.PingTargetBaselines(r.Context(), targets, baselineTo.Add(-24*time.Hour), baselineTo)
+	if err != nil {
+		slog.Warn("target baseline query failed", "err", err)
+		respondError(w, http.StatusBadGateway, "target baseline query failed")
+		return
+	}
+	respondOK(w, targetRegressionViews(candidates, baselines, requested))
+}
+
+type targetIssueView struct {
+	Addr            string  `json:"addr"`
+	ASN             *int64  `json:"asn,omitempty"`
+	Org             string  `json:"org,omitempty"`
+	Probes          int64   `json:"probes"`
+	SourceASes      int64   `json:"source_ases"`
+	AvgRttMs        float64 `json:"avg_rtt_ms,omitempty"`
+	LossPct         float64 `json:"loss_pct"`
+	LastSeen        int64   `json:"last_seen"`
+	BaselineLossPct float64 `json:"baseline_loss_pct"`
+	LossChangePct   float64 `json:"loss_change_pct"`
+	BaselineSamples int64   `json:"baseline_samples"`
+}
+
+func targetRegressionViews(candidates []graph.TargetInfo, baselines map[string]store.TargetBaseline, limit int) []targetIssueView {
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]targetIssueView, 0, min(limit, len(candidates)))
+	for _, candidate := range candidates {
+		baseline, ok := baselines[candidate.Addr]
+		if !ok || baseline.Sent <= 0 || baseline.Samples < 3 || baseline.Probes < 3 {
+			continue
+		}
+		change := candidate.LossPct - baseline.LossPct
+		// The issue list is for new degradation, not destinations that have always
+		// ignored PING. Require a reasonably healthy baseline and a material jump.
+		if baseline.LossPct > 20 || change < 20 {
+			continue
+		}
+		out = append(out, targetIssueView{
+			Addr: candidate.Addr, ASN: candidate.ASN, Org: candidate.Org,
+			Probes: candidate.Probes, SourceASes: candidate.SourceASes,
+			AvgRttMs: candidate.AvgRttMs, LossPct: candidate.LossPct, LastSeen: candidate.LastSeen,
+			BaselineLossPct: baseline.LossPct, LossChangePct: change, BaselineSamples: baseline.Samples,
+		})
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
 }
 
 func (s *Server) targetDetail(w http.ResponseWriter, r *http.Request) {

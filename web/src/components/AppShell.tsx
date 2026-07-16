@@ -6,10 +6,12 @@ import {
   Route,
   Satellite,
   Target,
+  Waypoints,
   Zap,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { GlobalSearch } from "@/components/GlobalSearch";
+import { FEATURES } from "@/lib/features";
 import { cn } from "@/lib/utils";
 
 // Navigation is grouped by operator workflow: triage first (Attention), then
@@ -20,7 +22,10 @@ const NAV_GROUPS = [
     label: "Attention",
     items: [
       { to: "/", label: "Network health", icon: Activity, end: true },
-      { to: "/alerts", label: "Alerts", icon: AlertTriangle },
+      ...(FEATURES.alerts
+        ? [{ to: "/alerts", label: "Alerts", icon: AlertTriangle }]
+        : []),
+      { to: "/correlation", label: "Route correlation", icon: Waypoints },
     ],
   },
   {

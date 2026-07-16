@@ -15,7 +15,11 @@ package graph
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"time"
+
+	"github.com/FalkorDB/falkordb-go/v2"
 )
 
 // Reader is a read-only handle to the graph. It is the subset of *Store the API
@@ -33,8 +37,10 @@ type Reader interface {
 	TargetDetail(ctx context.Context, addr string) (TargetDetail, error)
 	Targets(ctx context.Context, f TargetFilter) ([]TargetInfo, error)
 	HotHops(ctx context.Context, f HopFilter) ([]HotHop, error)
+	HopContexts(ctx context.Context, addrs []string) (map[string]HopContext, error)
 	TransitEdges(ctx context.Context, f TransitFilter) ([]ASNTransitEdge, error)
 	TransitPairDetail(ctx context.Context, asnA, asnB int64) (TransitPairDetail, error)
+	TransitPairTests(ctx context.Context, asnA, asnB int64, limit int) ([]TransitTest, error)
 	IPDetail(ctx context.Context, addr string) (IPDetail, error)
 	Path(ctx context.Context, src, dst string, maxHops int) (Path, error)
 	ReachableDestinations(ctx context.Context, src string) ([]ReachableGroup, error)
@@ -58,8 +64,8 @@ type AlertEvaluator interface {
 // AlertRuleSpec is the alert-rule projection the graph package needs to build its
 // Cypher. It mirrors alert.Rule without importing it (avoids a cycle).
 type AlertRuleSpec struct {
-	Metric     string  // loss_ratio | avg_rtt_ms | target_lost
-	Scope      string  // probe_target | asn_pair | target | asn_dst
+	Metric     string // loss_ratio | avg_rtt_ms | target_lost
+	Scope      string // probe_target | asn_pair | target | asn_dst
 	Comparison string
 	Threshold  float64
 	MinSent    int
@@ -75,14 +81,22 @@ var _ Reader = (*Store)(nil)
 
 // ---- Generic query-to-rows helper ------------------------------------------
 
-// rows runs a parameterized Cypher read query and yields one row at a time as a
-// column-name → value map. Values are the Go scalars FalkorDB's client decodes
-// (string, int64, float64, bool, nil, plus Node/Edge/Path for graph projections).
+// readQueryTimeoutMS is deliberately above FalkorDB's one-second default.
+// Aggregate read queries over the live graph (notably the ASN worklist) need
+// a few seconds on a populated graph, but remain bounded so a UI request never
+// runs indefinitely.
+const readQueryTimeoutMS = 5_000
+
+// rows runs a parameterized, read-only Cypher query and yields one row at a
+// time as a column-name → value map. Values are the Go scalars FalkorDB's
+// client decodes (string, int64, float64, bool, nil, plus Node/Edge/Path for
+// graph projections).
 func (s *Store) rows(ctx context.Context, cypher string, params map[string]any) ([]map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	res, err := s.graph.Query(cypher, params, nil)
+	options := falkordb.NewQueryOptions().SetTimeout(readQueryTimeoutMS)
+	res, err := s.graph.ROQuery(cypher, params, options)
 	if err != nil {
 		return nil, fmt.Errorf("cypher: %w", err)
 	}
@@ -115,15 +129,21 @@ func asInt(v any) int64 {
 }
 
 func asFloat(v any) float64 {
+	var value float64
 	switch t := v.(type) {
 	case float64:
-		return t
+		value = t
 	case int64:
-		return float64(t)
+		value = float64(t)
 	case int:
-		return float64(t)
+		value = float64(t)
+	default:
+		return 0
 	}
-	return 0
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
 }
 
 func asString(v any) string {
@@ -134,6 +154,11 @@ func asString(v any) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+func asBool(v any) bool {
+	b, _ := v.(bool)
+	return b
 }
 
 // asTime converts a FalkorDB epoch-seconds scalar into UTC time, mapping the
@@ -189,16 +214,19 @@ type GlobalLoss struct {
 	AvgLossPct   float64 `json:"avg_loss_pct"`  // over all edges with sent>0
 }
 
-// ASNIssue ranks a single AS by aggregate loss it is involved in, as either
-// source or destination of lossy PING edges. Fields are derived from current
-// PING-edge aggregates: Samples = count of lossy PING edges; LastSeen = the
-// most recent last_seen among those edges (unix seconds).
+// ASNIssue ranks a single AS by packet loss across its current PING edges.
+// AvgLossPct is packet-weighted: sum(sent - rcvd) / sum(sent), rather than an
+// average limited to already-lossy edges. Samples is the count of current
+// PING edges included in that aggregate; LastSeen is the most recent edge
+// timestamp (unix seconds).
 type ASNIssue struct {
 	ASN        int64   `json:"asn"`
 	Org        string  `json:"org"`
 	Role       string  `json:"role"` // "src" | "dst"
 	Samples    int64   `json:"samples"`
 	Probes     int64   `json:"probes"`
+	SourceASes int64   `json:"source_ases"`
+	Targets    int64   `json:"targets"`
 	AvgLossPct float64 `json:"avg_loss_pct"`
 	MaxLossPct float64 `json:"max_loss_pct"`
 	AvgRttMs   float64 `json:"avg_rtt_ms"`
@@ -233,23 +261,85 @@ type ASNDetail struct {
 }
 
 type ProbeInfo struct {
-	ID       int64  `json:"id"`
-	SrcIP    string `json:"src_ip"`
-	SrcASN   *int64 `json:"src_asn,omitempty"`
-	SrcOrg   string `json:"src_org,omitempty"`
-	AvgRttMs float64 `json:"avg_rtt_ms,omitempty"`
-	LossPct  float64 `json:"loss_pct,omitempty"`
-	LastSeen int64  `json:"last_seen"`
+	ID       int64          `json:"id"`
+	SrcIP    string         `json:"src_ip"`
+	SrcASN   *int64         `json:"src_asn,omitempty"`
+	SrcOrg   string         `json:"src_org,omitempty"`
+	Metadata *ProbeMetadata `json:"metadata,omitempty"`
+	AvgRttMs float64        `json:"avg_rtt_ms,omitempty"`
+	LossPct  float64        `json:"loss_pct,omitempty"`
+	LastSeen int64          `json:"last_seen"`
+}
+
+// ProbeMetadata is the cached public RIPE Atlas inventory attached to a probe
+// graph node. Latitude/longitude are privacy-obfuscated by RIPE Atlas.
+type ProbeMetadata struct {
+	DisplayName     string   `json:"display_name"`
+	Description     string   `json:"description,omitempty"`
+	ProbeType       string   `json:"probe_type"`
+	CountryCode     string   `json:"country_code,omitempty"`
+	Latitude        float64  `json:"latitude,omitempty"`
+	Longitude       float64  `json:"longitude,omitempty"`
+	IsAnchor        bool     `json:"is_anchor"`
+	IsPublic        bool     `json:"is_public"`
+	FirmwareVersion int64    `json:"firmware_version,omitempty"`
+	StatusID        int64    `json:"status_id"`
+	StatusName      string   `json:"status_name,omitempty"`
+	StatusSince     int64    `json:"status_since,omitempty"`
+	FirstConnected  int64    `json:"first_connected,omitempty"`
+	LastConnected   int64    `json:"last_connected,omitempty"`
+	PrefixV4        string   `json:"prefix_v4,omitempty"`
+	PrefixV6        string   `json:"prefix_v6,omitempty"`
+	ASNv4           int64    `json:"asn_v4,omitempty"`
+	ASNv6           int64    `json:"asn_v6,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	UpdatedAt       int64    `json:"updated_at"`
+}
+
+func probeMetadataFromRow(r map[string]any) *ProbeMetadata {
+	updatedAt := asInt(r["metadata_updated_at"])
+	if updatedAt <= 0 {
+		return nil
+	}
+	var tags []string
+	if raw := asString(r["tag_slugs"]); raw != "" {
+		for _, tag := range strings.Split(raw, ",") {
+			if tag = strings.TrimSpace(tag); tag != "" {
+				tags = append(tags, tag)
+			}
+		}
+	}
+	return &ProbeMetadata{
+		DisplayName: asString(r["display_name"]), Description: asString(r["description"]),
+		ProbeType: asString(r["probe_type"]), CountryCode: asString(r["country_code"]),
+		Latitude: asFloat(r["latitude"]), Longitude: asFloat(r["longitude"]),
+		IsAnchor: asBool(r["is_anchor"]), IsPublic: asBool(r["is_public"]),
+		FirmwareVersion: asInt(r["firmware_version"]), StatusID: asInt(r["status_id"]),
+		StatusName: asString(r["status_name"]), StatusSince: asInt(r["status_since"]),
+		FirstConnected: asInt(r["first_connected"]), LastConnected: asInt(r["last_connected"]),
+		PrefixV4: asString(r["prefix_v4"]), PrefixV6: asString(r["prefix_v6"]),
+		ASNv4: asInt(r["asn_v4"]), ASNv6: asInt(r["asn_v6"]), Tags: tags, UpdatedAt: updatedAt,
+	}
+}
+
+func probeInfoFromRow(r map[string]any) ProbeInfo {
+	return ProbeInfo{
+		ID: asInt(r["id"]), SrcIP: asString(r["src_ip"]),
+		SrcASN: ptrIf(asInt(r["asn"]), int64(0)), SrcOrg: asString(r["org"]),
+		Metadata: probeMetadataFromRow(r), LossPct: asFloat(r["loss_pct"]),
+		AvgRttMs: asFloat(r["rtt"]), LastSeen: asInt(r["last_seen"]),
+	}
 }
 
 type TargetInfo struct {
-	Addr     string  `json:"addr"`
-	ASN      *int64  `json:"asn,omitempty"`
-	Org      string  `json:"org,omitempty"`
-	Probes   int64   `json:"probes"`
-	AvgRttMs float64 `json:"avg_rtt_ms,omitempty"`
-	LossPct  float64 `json:"loss_pct,omitempty"`
-	LastSeen int64   `json:"last_seen"`
+	Addr       string  `json:"addr"`
+	ASN        *int64  `json:"asn,omitempty"`
+	Org        string  `json:"org,omitempty"`
+	Probes     int64   `json:"probes"`
+	SourceASes int64   `json:"source_ases,omitempty"`
+	AvgRttMs   float64 `json:"avg_rtt_ms,omitempty"`
+	LossPct    float64 `json:"loss_pct,omitempty"`
+	LastSeen   int64   `json:"last_seen"`
 }
 
 // ASNTransitEdge is one AS→AS transits link.
@@ -262,45 +352,75 @@ type ASNTransitEdge struct {
 	LastSeen  int64  `json:"last_seen"`
 }
 
+// HopContext supplies live graph identity and topology breadth for a hop found
+// by historical route correlation.
+type HopContext struct {
+	Addr     string `json:"addr"`
+	ASN      *int64 `json:"asn,omitempty"`
+	Org      string `json:"org,omitempty"`
+	Incoming int64  `json:"incoming"`
+	Outgoing int64  `json:"outgoing"`
+}
+
 type ProbeDetail struct {
-	ID         int64        `json:"id"`
-	SrcIP      string       `json:"src_ip"`
-	SrcASN     *int64       `json:"src_asn,omitempty"`
-	SrcOrg     string       `json:"src_org,omitempty"`
-	Targets    []TargetInfo `json:"targets"`
-	LastSeen   int64        `json:"last_seen"`
+	ID       int64          `json:"id"`
+	SrcIP    string         `json:"src_ip"`
+	SrcASN   *int64         `json:"src_asn,omitempty"`
+	SrcOrg   string         `json:"src_org,omitempty"`
+	Metadata *ProbeMetadata `json:"metadata,omitempty"`
+	Targets  []TargetInfo   `json:"targets"`
+	LastSeen int64          `json:"last_seen"`
 }
 
 type TargetDetail struct {
-	Addr      string       `json:"addr"`
-	ASN       *int64       `json:"asn,omitempty"`
-	Org       string       `json:"org,omitempty"`
-	Probes    []ProbeInfo  `json:"probes"`
+	Addr       string      `json:"addr"`
+	ASN        *int64      `json:"asn,omitempty"`
+	Org        string      `json:"org,omitempty"`
+	Probes     []ProbeInfo `json:"probes"`
 	NearbyHops []HotHop    `json:"nearby_hops"`
-	LastSeen  int64        `json:"last_seen"`
+	LastSeen   int64       `json:"last_seen"`
 }
 
 // HotHop is a NEXT_HOP edge flagged as a potential transit hotspot.
 type HotHop struct {
-	FromAddr  string `json:"from_addr"`
-	ToAddr    string `json:"to_addr"`
-	FromASN   *int64 `json:"from_asn,omitempty"`
-	FromOrg   string `json:"from_org,omitempty"`
-	ToASN     *int64 `json:"to_asn,omitempty"`
-	ToOrg     string `json:"to_org,omitempty"`
+	FromAddr  string  `json:"from_addr"`
+	ToAddr    string  `json:"to_addr"`
+	FromASN   *int64  `json:"from_asn,omitempty"`
+	FromOrg   string  `json:"from_org,omitempty"`
+	ToASN     *int64  `json:"to_asn,omitempty"`
+	ToOrg     string  `json:"to_org,omitempty"`
 	LastRttMs float64 `json:"last_rtt_ms"`
 	SeenCount int64   `json:"seen_count"`
 	LastSeen  int64   `json:"last_seen"`
 }
 
 type TransitPairDetail struct {
-	SrcASN    int64   `json:"src_asn"`
-	SrcOrg    string  `json:"src_org"`
-	DstASN    int64   `json:"dst_asn"`
-	DstOrg    string  `json:"dst_org"`
-	SeenCount int64   `json:"seen_count"`
-	LastSeen  int64   `json:"last_seen"`
-	Hops      []HotHop `json:"hops"`
+	SrcASN    int64         `json:"src_asn"`
+	SrcOrg    string        `json:"src_org"`
+	DstASN    int64         `json:"dst_asn"`
+	DstOrg    string        `json:"dst_org"`
+	SeenCount int64         `json:"seen_count"`
+	LastSeen  int64         `json:"last_seen"`
+	Hops      []HotHop      `json:"hops"`
+	Tests     []TransitTest `json:"tests"`
+}
+
+// TransitTest is the latest PING observation from a probe in the source AS to
+// a target in the destination AS. It is endpoint evidence for the AS pair, not
+// proof that the ping traversed the specific TRANSITS edge.
+type TransitTest struct {
+	ProbeID       int64          `json:"probe_id"`
+	ProbeMetadata *ProbeMetadata `json:"probe_metadata,omitempty"`
+	MsmID         int64          `json:"msm_id"`
+	SourceIP      string         `json:"source_ip"`
+	TargetIP      string         `json:"target_ip"`
+	Sent          int64          `json:"sent"`
+	Received      int64          `json:"received"`
+	LossPct       float64        `json:"loss_pct"`
+	AvgRttMs      float64        `json:"avg_rtt_ms"`
+	MinRttMs      float64        `json:"min_rtt_ms"`
+	MaxRttMs      float64        `json:"max_rtt_ms"`
+	LastSeen      int64          `json:"last_seen"`
 }
 
 // IPDetail describes a single :IP node and its incident NEXT_HOP edges.
@@ -323,11 +443,11 @@ type Path struct {
 // ReachableGroup is one destination AS (or "Direct targets" for un-AS'd IPs)
 // reachable from a given source, with a sample of concrete endpoint IPs.
 type ReachableGroup struct {
-	ASN      *int64  `json:"asn,omitempty"`
-	Org      string  `json:"org"`
-	IPCount  int64   `json:"ip_count"`
+	ASN      *int64   `json:"asn,omitempty"`
+	Org      string   `json:"org"`
+	IPCount  int64    `json:"ip_count"`
 	SampleIP []string `json:"sample_ips"`
-	Basis    string  `json:"basis"` // "probe" | "transit"
+	Basis    string   `json:"basis"` // "probe" | "transit"
 }
 
 // SearchResult is one autocomplete hit. Kind is "as" | "ip" | "probe". For AS
@@ -335,21 +455,22 @@ type ReachableGroup struct {
 // as a path endpoint (Addr is the first of these for back-compat). For ip/probe
 // hits, Addr is the single resolved address.
 type SearchResult struct {
-	Kind  string   `json:"kind"`            // as | ip | probe
-	Label string   `json:"label"`           // primary display text
-	Addr  string   `json:"addr,omitempty"`  // concrete IP for path src/dst
-	Addrs []string `json:"addrs,omitempty"` // for AS hits: several IPs in the AS
-	ASN   *int64   `json:"asn,omitempty"`
-	Org   string   `json:"org,omitempty"`
-	Sub   string   `json:"sub,omitempty"`   // secondary text (e.g. "AS13335 · 147 IPs")
+	Kind    string   `json:"kind"`            // as | ip | probe
+	Label   string   `json:"label"`           // primary display text
+	Addr    string   `json:"addr,omitempty"`  // concrete IP for path src/dst
+	Addrs   []string `json:"addrs,omitempty"` // for AS hits: several IPs in the AS
+	ASN     *int64   `json:"asn,omitempty"`
+	ProbeID *int64   `json:"probe_id,omitempty"`
+	Org     string   `json:"org,omitempty"`
+	Sub     string   `json:"sub,omitempty"` // secondary text (e.g. "AS13335 · 147 IPs")
 }
 
 type PathHop struct {
-	Addr     string  `json:"addr"`
-	ASN      *int64  `json:"asn,omitempty"`
-	Org      string  `json:"org,omitempty"`
-	RttMs    float64 `json:"rtt_ms"`
-	SeenCount int64  `json:"seen_count"`
+	Addr      string  `json:"addr"`
+	ASN       *int64  `json:"asn,omitempty"`
+	Org       string  `json:"org,omitempty"`
+	RttMs     float64 `json:"rtt_ms"`
+	SeenCount int64   `json:"seen_count"`
 }
 
 // Subgraph is the nodes+edges payload for the topology force-directed view.
@@ -359,11 +480,12 @@ type Subgraph struct {
 }
 
 type GraphNode struct {
-	ID    string  `json:"id"`
-	Label string  `json:"label"`
-	Kind  string  `json:"kind"` // ip | probe | as
-	ASN   *int64  `json:"asn,omitempty"`
-	Org   string  `json:"org,omitempty"`
+	ID            string         `json:"id"`
+	Label         string         `json:"label"`
+	Kind          string         `json:"kind"` // ip | probe | as
+	ASN           *int64         `json:"asn,omitempty"`
+	Org           string         `json:"org,omitempty"`
+	ProbeMetadata *ProbeMetadata `json:"probe_metadata,omitempty"`
 }
 
 type GraphEdge struct {
@@ -378,13 +500,14 @@ type GraphEdge struct {
 // ---- Filters ----------------------------------------------------------------
 
 type ASNIssueFilter struct {
-	Role      string // "src" | "dst"
-	MinLoss   float64
-	MinProbes int64
-	Limit     int
-	Offset    int
-	Sort      string // loss | probes | samples | last_seen | impact
-	Order     string // desc | asc
+	Role          string // "src" | "dst"
+	MinLoss       float64
+	MinProbes     int64
+	MinSourceASes int64
+	Limit         int
+	Offset        int
+	Sort          string // loss | probes | samples | last_seen | impact
+	Order         string // desc | asc
 }
 
 type ASNPairFilter struct {
@@ -397,6 +520,9 @@ type ASNPairFilter struct {
 
 type ProbeFilter struct {
 	ASN       int64 // source ASN, 0 = any
+	Country   string
+	Type      string // anchor | software | hardware
+	Status    string // RIPE Atlas status name
 	Limit     int
 	MinProbes int64
 	Sort      string // loss | rtt | last_seen

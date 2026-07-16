@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -15,9 +16,18 @@ type envelope struct {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		slog.Error("encode api response", "err", err)
+		status = http.StatusInternalServerError
+		body.Reset()
+		body.WriteString("{\"error\":\"internal error\"}\n")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if _, err := w.Write(body.Bytes()); err != nil {
+		slog.Debug("write api response", "err", err)
+	}
 }
 
 func respondOK(w http.ResponseWriter, data any) {

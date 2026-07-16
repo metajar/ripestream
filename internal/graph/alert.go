@@ -21,6 +21,7 @@ func (s *Store) EvaluateAlert(ctx context.Context, rule AlertRuleSpec) ([]AlertS
 	if q.cypher == "" {
 		return nil, nil
 	}
+	q.params["cutoff"] = s.activeCutoff()
 	rows, err := s.rows(ctx, q.cypher, q.params)
 	if err != nil {
 		return nil, err
@@ -82,19 +83,17 @@ func buildAlertCypher(rule AlertRuleSpec) (builtQuery, error) {
 		// Always require some traffic to avoid dividing by zero.
 		where = append(where, "e.sent > 0")
 	}
+	// Alerts describe live state; retained historical edges must never keep an
+	// alert firing after its evidence has gone stale.
+	where = append(where, "e.last_seen >= $cutoff")
 	if rule.Metric == "target_lost" {
 		where = append(where, "e.rcvd = 0")
 	} else if rule.Metric == "loss_ratio" {
-		// Scopes with all-healthy edges can never exceed a positive loss
-		// threshold, so prune them. This shrinks the 300K+ edge scan to the lossy
-		// subset and keeps the aggregate query fast. If a user sets min_loss, use
-		// the stricter of the two.
-		minL := 0.0001
-		if rule.MinLoss > minL {
-			minL = rule.MinLoss
+		// Healthy edges must remain in the denominator or a single lossy probe
+		// turns a mostly healthy scope into an apparent 100% incident.
+		if rule.MinLoss > 0 {
+			where = append(where, "e.loss_ratio >= $minLoss")
 		}
-		params["minLoss"] = minL
-		where = append(where, "e.loss_ratio >= $minLoss")
 	} else if rule.MinLoss > 0 {
 		where = append(where, "e.loss_ratio >= $minLoss")
 	}
@@ -145,7 +144,7 @@ func buildAlertCypher(rule AlertRuleSpec) (builtQuery, error) {
 	// GROUP BY + RETURN.
 	switch rule.Scope {
 	case "probe_target":
-		q.WriteString("WITH p.id AS probe_id, t.addr AS target, avg(e.loss_ratio) AS avg_loss,\n")
+		q.WriteString("WITH p.id AS probe_id, t.addr AS target, (1.0 * (sum(e.sent) - sum(e.rcvd)) / sum(e.sent)) AS avg_loss,\n")
 		q.WriteString("     max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt, count(*) AS samples\n")
 		q.WriteString("RETURN toString(probe_id) + '→' + target AS scope_key,\n")
 		q.WriteString(formatMetricReturn(rule.Metric) + " AS value,\n")
@@ -153,27 +152,30 @@ func buildAlertCypher(rule AlertRuleSpec) (builtQuery, error) {
 		q.WriteString("ORDER BY value DESC LIMIT 200")
 	case "asn_pair":
 		q.WriteString("WITH srcAS.asn AS src_asn, srcAS.org AS src_org, dstAS.asn AS dst_asn, dstAS.org AS dst_org,\n")
-		q.WriteString("     avg(e.loss_ratio) AS avg_loss, max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt,\n")
+		q.WriteString("     (1.0 * (sum(e.sent) - sum(e.rcvd)) / sum(e.sent)) AS avg_loss, max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt,\n")
 		q.WriteString("     count(*) AS samples, count(DISTINCT p.id) AS probes\n")
+		q.WriteString("WHERE probes >= 2\n")
 		q.WriteString("RETURN toString(src_asn) + '→' + toString(dst_asn) AS scope_key,\n")
 		q.WriteString(formatMetricReturn(rule.Metric) + " AS value,\n")
 		q.WriteString("src_asn AS src_asn, src_org AS src_org, dst_asn AS dst_asn, dst_org AS dst_org,\n")
 		q.WriteString("samples AS samples, probes AS probes, avg_loss AS avg_loss, avg_rtt AS avg_rtt\n")
 		q.WriteString("ORDER BY value DESC LIMIT 200")
 	case "target":
-		q.WriteString("WITH t.addr AS target, avg(e.loss_ratio) AS avg_loss, max(e.loss_ratio) AS max_loss,\n")
+		q.WriteString("WITH t.addr AS target, (1.0 * (sum(e.sent) - sum(e.rcvd)) / sum(e.sent)) AS avg_loss, max(e.loss_ratio) AS max_loss,\n")
 		q.WriteString("     avg(e.avg_rtt_ms) AS avg_rtt, count(DISTINCT p.id) AS probes, count(*) AS samples\n")
+		q.WriteString("WHERE probes >= 3\n")
 		q.WriteString("RETURN target AS scope_key,\n")
 		q.WriteString(formatMetricReturn(rule.Metric) + " AS value,\n")
 		q.WriteString("target AS target, samples AS samples, probes AS probes, avg_loss AS avg_loss, avg_rtt AS avg_rtt\n")
 		q.WriteString("ORDER BY value DESC LIMIT 200")
 	case "asn_dst":
-		q.WriteString("WITH dstAS.asn AS dst_asn, dstAS.org AS dst_org, avg(e.loss_ratio) AS avg_loss,\n")
+		q.WriteString("WITH dstAS.asn AS dst_asn, dstAS.org AS dst_org, (1.0 * (sum(e.sent) - sum(e.rcvd)) / sum(e.sent)) AS avg_loss,\n")
 		q.WriteString("     max(e.loss_ratio) AS max_loss, avg(e.avg_rtt_ms) AS avg_rtt,\n")
-		q.WriteString("     count(DISTINCT p.id) AS probes, count(*) AS samples\n")
+		q.WriteString("     count(DISTINCT p.id) AS probes, count(DISTINCT p.source_asn) AS source_ases, count(*) AS samples\n")
+		q.WriteString("WHERE probes >= 3 AND source_ases >= 2\n")
 		q.WriteString("RETURN toString(dst_asn) AS scope_key,\n")
 		q.WriteString(formatMetricReturn(rule.Metric) + " AS value,\n")
-		q.WriteString("dst_asn AS dst_asn, dst_org AS dst_org, samples AS samples, probes AS probes,\n")
+		q.WriteString("dst_asn AS dst_asn, dst_org AS dst_org, samples AS samples, probes AS probes, source_ases AS source_ases,\n")
 		q.WriteString("avg_loss AS avg_loss, avg_rtt AS avg_rtt\n")
 		q.WriteString("ORDER BY value DESC LIMIT 200")
 	}

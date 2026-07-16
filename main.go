@@ -42,30 +42,36 @@ var schemaSQL string
 
 func main() {
 	var (
-		chURL         = flag.String("clickhouse", envDefault("RIPESTREAM_CLICKHOUSE", "http://localhost:8123"), "ClickHouse HTTP base URL")
-		chDB          = flag.String("db", envDefault("RIPESTREAM_DB", "ripestream"), "ClickHouse database")
-		chTable       = flag.String("table", envDefault("RIPESTREAM_TABLE", "atlas_results"), "ClickHouse table")
-		chUser        = flag.String("user", envDefault("RIPESTREAM_USER", "default"), "ClickHouse user")
-		chPass        = flag.String("password", os.Getenv("RIPESTREAM_PASSWORD"), "ClickHouse password")
-		falkorAddr    = flag.String("falkor-addr", envDefault("RIPESTREAM_FALKOR_ADDR", "localhost:6379"), "FalkorDB address host:port")
-		falkorGraph   = flag.String("falkor-graph", envDefault("RIPESTREAM_FALKOR_GRAPH", "ripestream"), "FalkorDB graph name")
-		falkorPass    = flag.String("falkor-password", os.Getenv("RIPESTREAM_FALKOR_PASSWORD"), "FalkorDB password")
-		falkorEnabled = flag.Bool("falkor-enabled", envBoolDefault("RIPESTREAM_FALKOR_ENABLED", true), "write traceroute/ping topology to FalkorDB")
-		asnDBPath     = flag.String("asn-db", envDefault("RIPESTREAM_ASN_DB", asn.DefaultDBPath), "GeoLite2-ASN .mmdb path (empty disables ASN enrichment)")
-		msmCSV        = flag.String("msm", envDefault("RIPESTREAM_MSM", ""), "comma-separated measurement IDs to subscribe to (empty = firehose)")
-		prbCSV        = flag.String("prb", envDefault("RIPESTREAM_PRB", ""), "comma-separated probe IDs to subscribe to")
-		streamURL     = flag.String("stream-url", atlas.DefaultBaseURL, "RIPE Atlas stream endpoint")
-		batchSize     = flag.Int("batch-size", 1000, "max rows/ops per sink flush")
-		flushInterval = flag.Duration("flush-interval", 5*time.Second, "max time between flushes")
-		idleTimeout   = flag.Duration("idle-timeout", 5*time.Minute, "reconnect a connection after this long with no data (0 disables)")
-		applySchema   = flag.Bool("apply-schema", true, "apply schema.sql on startup if true")
-		httpAddr      = flag.String("http-addr", envDefault("RIPESTREAM_HTTP_ADDR", ":8080"), "HTTP address for the API + UI server (empty disables)")
-		uiEnabled     = flag.Bool("ui-enabled", envBoolDefault("RIPESTREAM_UI_ENABLED", true), "serve the embedded web UI at /")
-		dbPath        = flag.String("db-path", envDefault("RIPESTREAM_DB_PATH", "ripestream.db"), "SQLite path for alert state (rule defs, states, events)")
-		alertEnabled  = flag.Bool("alert-enabled", envBoolDefault("RIPESTREAM_ALERT_ENABLED", true), "run the alerting evaluator")
-		alertInterval = flag.Duration("alert-interval", time.Minute, "how often the alert evaluator ticks")
-		overviewRefresh = flag.Duration("overview-refresh", 60*time.Second, "how often to recompute the cached overview query")
-		logLevel      = flag.String("log-level", envDefault("RIPESTREAM_LOG_LEVEL", "info"), "log level: debug|info|warn|error")
+		chURL              = flag.String("clickhouse", envDefault("RIPESTREAM_CLICKHOUSE", "http://localhost:8123"), "ClickHouse HTTP base URL")
+		chDB               = flag.String("db", envDefault("RIPESTREAM_DB", "ripestream"), "ClickHouse database")
+		chTable            = flag.String("table", envDefault("RIPESTREAM_TABLE", "atlas_results"), "ClickHouse table")
+		chUser             = flag.String("user", envDefault("RIPESTREAM_USER", "default"), "ClickHouse user")
+		chPass             = flag.String("password", os.Getenv("RIPESTREAM_PASSWORD"), "ClickHouse password")
+		falkorAddr         = flag.String("falkor-addr", envDefault("RIPESTREAM_FALKOR_ADDR", "localhost:6379"), "FalkorDB address host:port")
+		falkorGraph        = flag.String("falkor-graph", envDefault("RIPESTREAM_FALKOR_GRAPH", "ripestream"), "FalkorDB graph name")
+		falkorPass         = flag.String("falkor-password", os.Getenv("RIPESTREAM_FALKOR_PASSWORD"), "FalkorDB password")
+		falkorEnabled      = flag.Bool("falkor-enabled", envBoolDefault("RIPESTREAM_FALKOR_ENABLED", true), "write traceroute/ping topology to FalkorDB")
+		asnDBPath          = flag.String("asn-db", envDefault("RIPESTREAM_ASN_DB", asn.DefaultDBPath), "GeoLite2-ASN .mmdb path (empty disables ASN enrichment)")
+		msmCSV             = flag.String("msm", envDefault("RIPESTREAM_MSM", ""), "comma-separated measurement IDs to subscribe to (empty = firehose)")
+		prbCSV             = flag.String("prb", envDefault("RIPESTREAM_PRB", ""), "comma-separated probe IDs to subscribe to")
+		streamURL          = flag.String("stream-url", atlas.DefaultBaseURL, "RIPE Atlas stream endpoint")
+		batchSize          = flag.Int("batch-size", 1000, "max rows/ops per sink flush")
+		flushInterval      = flag.Duration("flush-interval", 5*time.Second, "max time between flushes")
+		idleTimeout        = flag.Duration("idle-timeout", 5*time.Minute, "reconnect a connection after this long with no data (0 disables)")
+		applySchema        = flag.Bool("apply-schema", true, "apply schema.sql on startup if true")
+		httpAddr           = flag.String("http-addr", envDefault("RIPESTREAM_HTTP_ADDR", ":8080"), "HTTP address for the API + UI server (empty disables)")
+		uiEnabled          = flag.Bool("ui-enabled", envBoolDefault("RIPESTREAM_UI_ENABLED", true), "serve the embedded web UI at /")
+		dbPath             = flag.String("db-path", envDefault("RIPESTREAM_DB_PATH", "ripestream.db"), "SQLite path for alert state (rule defs, states, events)")
+		alertEnabled       = flag.Bool("alert-enabled", envBoolDefault("RIPESTREAM_ALERT_ENABLED", true), "run the alerting evaluator")
+		alertInterval      = flag.Duration("alert-interval", time.Minute, "how often the alert evaluator ticks")
+		overviewRefresh    = flag.Duration("overview-refresh", 60*time.Second, "how often to recompute the cached overview query")
+		graphActiveWindow  = flag.Duration("graph-active-window", 30*time.Minute, "only measurements this recent contribute to live health")
+		graphRetention     = flag.Duration("graph-retention", 6*time.Hour, "delete graph observations older than this (0 disables pruning)")
+		graphPruneInterval = flag.Duration("graph-prune-interval", 15*time.Minute, "how often to prune stale FalkorDB data")
+		probeMetadata      = flag.Bool("probe-metadata-enabled", envBoolDefault("RIPESTREAM_PROBE_METADATA_ENABLED", true), "enrich probe nodes from the public RIPE Atlas inventory")
+		probeAPIURL        = flag.String("probe-api-url", envDefault("RIPESTREAM_PROBE_API_URL", atlas.DefaultProbeAPIURL), "RIPE Atlas probe inventory endpoint")
+		probeMetaRefresh   = flag.Duration("probe-metadata-refresh", 24*time.Hour, "refresh interval for cached RIPE Atlas probe metadata")
+		logLevel           = flag.String("log-level", envDefault("RIPESTREAM_LOG_LEVEL", "info"), "log level: debug|info|warn|error")
 	)
 	flag.Parse()
 
@@ -118,10 +124,11 @@ func main() {
 
 		var err error
 		gs, err = graph.New(graph.Config{
-			Addr:     *falkorAddr,
-			Password: *falkorPass,
-			Graph:    *falkorGraph,
-			ASN:      lookup,
+			Addr:         *falkorAddr,
+			Password:     *falkorPass,
+			Graph:        *falkorGraph,
+			ASN:          lookup,
+			ActiveWindow: *graphActiveWindow,
 		})
 		if err != nil {
 			slog.Error("failed to connect to falkordb", "err", err)
@@ -163,6 +170,17 @@ func main() {
 		g.Go(func() error {
 			return gs.Run(gctx, graphIn, *batchSize, *flushInterval)
 		})
+		if *probeMetadata {
+			probeClient := &atlas.ProbeClient{BaseURL: *probeAPIURL}
+			g.Go(func() error {
+				return gs.RunProbeMetadata(gctx, probeClient, *probeMetaRefresh)
+			})
+		}
+		if *graphRetention > 0 {
+			g.Go(func() error {
+				return gs.RunJanitor(gctx, *graphRetention, *graphPruneInterval, 1000)
+			})
+		}
 	}
 
 	// HTTP API + UI server. Runs in the same errgroup so it shuts down with the
@@ -211,7 +229,6 @@ func main() {
 func startHTTP(ctx context.Context, g *errgroup.Group, addr string, uiEnabled bool, gr graph.Reader, ch store.Reader, alerter api.Alerter, overviewTTL time.Duration) {
 	srv := api.New(gr, ch, alerter, overviewTTL)
 	srv.StartCache(ctx) // background overview refresher; logs each refresh's duration
-	defer srv.StopCache()
 	root := srv.Handler()
 	if uiEnabled {
 		distFS, err := fs.Sub(webDist, "web/dist")
@@ -229,8 +246,15 @@ func startHTTP(ctx context.Context, g *errgroup.Group, addr string, uiEnabled bo
 		})
 	}
 	g.Go(func() error {
+		defer srv.StopCache()
 		httpSrv := &http.Server{
-			Addr: addr, Handler: root, ReadHeaderTimeout: 10 * time.Second,
+			Addr:              addr,
+			Handler:           root,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    1 << 20,
 		}
 		go func() {
 			<-ctx.Done()

@@ -19,9 +19,19 @@ type Reader interface {
 	QueryJSON(ctx context.Context, query string) ([]map[string]any, error)
 	// PingSeries returns bucketed ping-metric history for charts.
 	PingSeries(ctx context.Context, metric string, probe int64, target string, from, to time.Time, buckets int) ([]SeriesPoint, error)
+	// PingPairSeries returns loss and RTT history scoped to a set of source
+	// probes and destination targets resolved from a graph transit pair.
+	PingPairSeries(ctx context.Context, probes []int64, targets []string, from, to time.Time, buckets int) ([]PairSeriesPoint, error)
 	// PingWindowSummary returns loss/RTT aggregates over a time window plus a
 	// prior equal-duration baseline, scoped to a target/probe.
 	PingWindowSummary(ctx context.Context, target string, probe int64, from, to time.Time) (WindowSummary, error)
+	// PingTargetBaselines returns packet-weighted historical loss for a bounded
+	// set of targets in one query, used to distinguish new regressions from
+	// persistent non-responders.
+	PingTargetBaselines(ctx context.Context, targets []string, from, to time.Time) (map[string]TargetBaseline, error)
+	// HopCommonalities finds shared traceroute hops with a recent RTT regression
+	// against their own preceding historical baseline.
+	HopCommonalities(ctx context.Context, now time.Time, f HopCommonalityFilter) ([]HopCommonality, error)
 }
 
 // Compile-time: *Store implements Reader.

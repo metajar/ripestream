@@ -3,10 +3,11 @@ import { AlertTriangle, ArrowRight, ChevronDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { api, type Issue } from "@/api/client";
-import { DataStatus, Evidence, SeverityBadge, severityFromLossPct } from "@/components/health";
+import { DataStatus, Evidence, SEVERITY, SeverityBadge } from "@/components/health";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { FEATURES } from "@/lib/features";
 import { fmtNum, fmtPct } from "@/lib/utils";
 
 export function OverviewPage() {
@@ -26,18 +27,20 @@ export function OverviewPage() {
           <h1 className="text-lg font-semibold text-text-primary">Network health</h1>
           <DataStatus meta={meta} />
         </div>
-        <Link
-          to="/alerts"
-          className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-            o.active_alerts > 0
-              ? "border-error-500/30 bg-error-500/10 text-error-500"
-              : "border-border-primary bg-bg-secondary text-text-tertiary"
-          } hover:border-border-secondary`}
-        >
-          <AlertTriangle className="h-4 w-4" />
-          <span className="font-medium">{o.active_alerts}</span>
-          <span className="text-xs">{o.active_alerts === 1 ? "active alert" : "active alerts"}</span>
-        </Link>
+        {FEATURES.alerts && (
+          <Link
+            to="/alerts"
+            className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+              o.active_alerts > 0
+                ? "border-error-500/30 bg-error-500/10 text-error-500"
+                : "border-border-primary bg-bg-secondary text-text-tertiary"
+            } hover:border-border-secondary`}
+          >
+            <AlertTriangle className="h-4 w-4" />
+            <span className="font-medium">{o.active_alerts}</span>
+            <span className="text-xs">{o.active_alerts === 1 ? "active alert" : "active alerts"}</span>
+          </Link>
+        )}
       </div>
 
       {/* First: Needs attention queue */}
@@ -93,7 +96,7 @@ function IssueCard({ issue }: { issue: Issue }) {
     <Card className="flex flex-col gap-3 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <SeverityBadge severity={severityFromLossPct(issue.loss_pct)} />
+          <SeverityBadge severity={SEVERITY[issue.severity]} />
           <h3 className="mt-1.5 text-sm font-medium text-text-primary">{issue.title}</h3>
         </div>
         {issue.source === "alert" && (
@@ -207,9 +210,9 @@ function CoverageStat({ label, value }: { label: string; value: string }) {
 // ---- Diagnose by pattern ----------------------------------------------------
 
 function DiagnoseByPattern({ overview: o }: { overview: import("@/api/client").Overview }) {
-  const dst = o.top_dst_as.slice(0, 5);
-  const src = o.top_src_as.slice(0, 5);
-  const pairs = o.top_as_pairs.slice(0, 5);
+  const dst = (o.top_dst_as ?? []).slice(0, 5);
+  const src = (o.top_src_as ?? []).slice(0, 5);
+  const pairs = (o.top_as_pairs ?? []).slice(0, 5);
 
   return (
     <section aria-labelledby="pattern-heading">
@@ -271,7 +274,9 @@ function PatternCard({
           <div className="space-y-1">
             {issues.map((a, i) => {
               const asn = "asn" in a ? a.asn : 0;
-              const org = "org" in a ? a.org : "as_org" in a ? a.src_org : "";
+              const org = "org" in a
+                ? a.org
+                : `${a.src_org || `AS${a.src_asn}`} → ${a.dst_org || `AS${a.dst_asn}`}`;
               const href = linkKey === "pair" && "src_asn" in a ? `/transit/${a.src_asn}/${a.dst_asn}` : `${linkPrefix}${asn}`;
               return (
                 <Link

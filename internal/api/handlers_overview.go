@@ -15,6 +15,10 @@ import (
 // handler returns instantly. When no cached value is ready yet (first load or
 // graph disabled), it falls back to a direct (possibly slow) query.
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
+	if s.graph == nil {
+		respondError(w, http.StatusServiceUnavailable, "graph is disabled")
+		return
+	}
 	// Active-alert count is cheap and live; merge it into whatever we serve.
 	mergeActive := func(o *graph.Overview) {
 		if s.alerter == nil {
@@ -31,11 +35,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, envelope{
 				Data: val,
 				Meta: overviewMeta{
-					Cached:    true,
-					Stale:     stale,
-					TookMS:    s.overviewCache.lastMS.Load(),
-					TTLSec:    int(s.overviewTTL / time.Second),
-					LastOK:    s.overviewCache.lastOK.Load(),
+					Cached: true,
+					Stale:  stale,
+					TookMS: s.overviewCache.lastMS.Load(),
+					TTLSec: int(s.overviewTTL / time.Second),
+					LastOK: s.overviewCache.lastOK.Load(),
 				},
 			})
 			return
@@ -56,11 +60,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 
 // overviewMeta describes cache freshness, surfaced in the response envelope.
 type overviewMeta struct {
-	Cached bool   `json:"cached"`
-	Stale  bool   `json:"stale"`
-	TookMS int64  `json:"took_ms"`
-	TTLSec int    `json:"ttl_sec"`
-	LastOK bool   `json:"last_ok"`
+	Cached bool  `json:"cached"`
+	Stale  bool  `json:"stale"`
+	TookMS int64 `json:"took_ms"`
+	TTLSec int   `json:"ttl_sec"`
+	LastOK bool  `json:"last_ok"`
 }
 
 // asnIssues -> UC1: ranked ASes by loss, role = src|dst, drill seed for UC2.

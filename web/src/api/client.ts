@@ -14,18 +14,23 @@ async function get<T>(path: string): Promise<T> {
 // that carry meaningful metadata (e.g. /api/overview cache freshness).
 async function getWithMeta<T, M = unknown>(path: string): Promise<{ data: T; meta?: M }> {
   const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const body = (await res.json()) as Envelope<never>;
-      if (body.error) msg = body.error;
-    } catch {
-      /* keep default */
-    }
-    throw new Error(msg);
+  const raw = await res.text();
+  if (!raw.trim()) {
+    throw new Error(`API returned an empty response (HTTP ${res.status})`);
   }
-  const body = (await res.json()) as Envelope<T, M>;
+
+  let body: Envelope<T, M>;
+  try {
+    body = JSON.parse(raw) as Envelope<T, M>;
+  } catch {
+    throw new Error(`API returned invalid JSON (HTTP ${res.status})`);
+  }
+
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
   if (body.error) throw new Error(body.error);
+  if (body.data === undefined) throw new Error("API response did not include data");
   return { data: body.data as T, meta: body.meta };
 }
 
@@ -64,6 +69,8 @@ export interface ASNIssue {
   role: "src" | "dst";
   samples: number;
   probes: number;
+  source_ases: number;
+  targets: number;
   avg_loss_pct: number;
   max_loss_pct: number;
   avg_rtt_ms: number;
@@ -128,9 +135,33 @@ export interface ProbeInfo {
   src_ip: string;
   src_asn?: number;
   src_org?: string;
+  metadata?: ProbeMetadata;
   avg_rtt_ms?: number;
   loss_pct?: number;
   last_seen: number;
+}
+
+export interface ProbeMetadata {
+  display_name: string;
+  description?: string;
+  probe_type: string;
+  country_code?: string;
+  latitude?: number;
+  longitude?: number;
+  is_anchor: boolean;
+  is_public: boolean;
+  firmware_version?: number;
+  status_id: number;
+  status_name?: string;
+  status_since?: number;
+  first_connected?: number;
+  last_connected?: number;
+  prefix_v4?: string;
+  prefix_v6?: string;
+  asn_v4?: number;
+  asn_v6?: number;
+  tags?: string[];
+  updated_at: number;
 }
 
 export interface TargetInfo {
@@ -138,8 +169,12 @@ export interface TargetInfo {
   asn?: number;
   org?: string;
   probes: number;
+  source_ases?: number;
   avg_rtt_ms?: number;
   loss_pct?: number;
+  baseline_loss_pct?: number;
+  loss_change_pct?: number;
+  baseline_samples?: number;
   last_seen: number;
 }
 
@@ -157,6 +192,7 @@ export interface ProbeDetail {
   src_ip: string;
   src_asn?: number;
   src_org?: string;
+  metadata?: ProbeMetadata;
   targets: TargetInfo[];
   last_seen: number;
 }
@@ -171,6 +207,35 @@ export interface HotHop {
   last_rtt_ms: number;
   seen_count: number;
   last_seen: number;
+}
+
+export interface HopCommonality {
+  addr: string;
+  asn?: number;
+  org?: string;
+  incoming: number;
+  outgoing: number;
+  recent_median_rtt_ms: number;
+  baseline_median_rtt_ms: number;
+  rtt_delta_ms: number;
+  change_pct: number;
+  impact_score: number;
+  recent_samples: number;
+  baseline_samples: number;
+  probes: number;
+  targets: number;
+  traces: number;
+  affected_probes: number[];
+  affected_targets: string[];
+  first_seen: number;
+  last_seen: number;
+}
+
+export interface HopCommonalityResponse {
+  generated_at: number;
+  recent_minutes: number;
+  baseline_hours: number;
+  candidates: HopCommonality[];
 }
 
 export interface TargetDetail {
@@ -190,6 +255,31 @@ export interface TransitPairDetail {
   seen_count: number;
   last_seen: number;
   hops: HotHop[];
+  tests: TransitTest[];
+}
+
+export interface TransitTest {
+  probe_id: number;
+  probe_metadata?: ProbeMetadata;
+  msm_id: number;
+  source_ip: string;
+  target_ip: string;
+  sent: number;
+  received: number;
+  loss_pct: number;
+  avg_rtt_ms: number;
+  min_rtt_ms: number;
+  max_rtt_ms: number;
+  last_seen: number;
+}
+
+export interface TransitPairSeriesPoint {
+  ts: string;
+  loss_pct: number;
+  avg_rtt_ms: number;
+  samples: number;
+  probes: number;
+  targets: number;
 }
 
 export interface IPDetail {
@@ -228,6 +318,7 @@ export interface SearchResult {
   addr?: string;
   addrs?: string[];
   asn?: number;
+  probe_id?: number;
   org?: string;
   sub?: string;
 }
@@ -238,6 +329,7 @@ export interface GraphNode {
   kind: "ip" | "probe" | "as";
   asn?: number;
   org?: string;
+  probe_metadata?: ProbeMetadata;
 }
 export interface GraphEdge {
   from: string;
@@ -288,7 +380,13 @@ export const api = {
     get<TargetInfo[]>(`/api/asn/${asn}/targets?limit=${limit}`),
   asnTransit: (asn: number, limit = 50) =>
     get<ASNTransitEdge[]>(`/api/asn/${asn}/transit?limit=${limit}`),
-  probes: (limit = 50) => get<ProbeInfo[]>(`/api/probes?limit=${limit}`),
+  probes: (limit = 50, filters: { country?: string; type?: string; status?: string } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (filters.country) q.set("country", filters.country);
+    if (filters.type) q.set("type", filters.type);
+    if (filters.status) q.set("status", filters.status);
+    return get<ProbeInfo[]>(`/api/probes?${q}`);
+  },
   probeDetail: (id: number) => get<ProbeDetail>(`/api/probe/${id}`),
   targets: (limit = 50) => get<TargetInfo[]>(`/api/targets?limit=${limit}`),
   targetDetail: (addr: string) =>
@@ -296,10 +394,18 @@ export const api = {
   ipDetail: (addr: string) => get<IPDetail>(`/api/ip/${encodeURIComponent(addr)}`),
   hotHops: (limit = 50, minRtt = 100) =>
     get<HotHop[]>(`/api/hops/hotspots?limit=${limit}&min_rtt=${minRtt}`),
+  hopCommonalities: (range = "30m", minProbes = 3, limit = 40) =>
+    get<HopCommonalityResponse>(
+      `/api/hops/commonality?range=${encodeURIComponent(range)}&min_probes=${minProbes}&limit=${limit}`,
+    ),
   transitEdges: (limit = 50) =>
     get<ASNTransitEdge[]>(`/api/transit?limit=${limit}`),
   transitPairDetail: (a: number, b: number) =>
     get<TransitPairDetail>(`/api/transit/${a}/${b}`),
+  transitPairSeries: (a: number, b: number, range = "24h", buckets = 60) =>
+    get<TransitPairSeriesPoint[]>(
+      `/api/transit/${a}/${b}/series?range=${encodeURIComponent(range)}&buckets=${buckets}`,
+    ),
   path: (src: string, dst: string, maxHops = 15) =>
     get<GraphPath>(
       `/api/path?src=${encodeURIComponent(src)}&dst=${encodeURIComponent(dst)}&max_hops=${maxHops}`,

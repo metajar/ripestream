@@ -28,8 +28,6 @@ func asnIssueSortExpr(sort string) (expr string, ok bool) {
 		return "samples", true
 	case "last_seen":
 		return "last_seen", true
-	case "impact":
-		return "impact", true
 	default:
 		return "", false
 	}
@@ -60,6 +58,8 @@ func targetSortExpr(sort string) (expr string, ok bool) {
 		return "probes", true
 	case "last_seen":
 		return "last_seen", true
+	case "impact":
+		return "impact", true
 	default:
 		return "", false
 	}

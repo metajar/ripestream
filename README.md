@@ -81,6 +81,12 @@ on `IP.addr`, `Probe.id`, and `AS.asn` are ensured on startup. Place
 
 FalkorDB Browser UI (compose): http://localhost:3000
 
+FalkorDB is a bounded live-state store, not the historical archive: by default
+only the last 30 minutes contribute to health and a background janitor removes
+topology older than 6 hours in small batches. ClickHouse retains the full result
+history. On the first production start after upgrading, the janitor may take
+several intervals to drain a large stale backlog without blocking ingestion.
+
 ## Web UI & API
 
 The binary also serves an observability dashboard and JSON API (dark-mode,
@@ -117,7 +123,7 @@ go build -o ripestream .                # embeds web/dist/ into the binary
 | **ASNs** → **ASN detail** | Per-AS ranking by loss; drill into probes, targets, transit relationships |
 | **Probes** → **Probe detail** | Lossy probes; per-probe target health |
 | **Targets** → **Target detail** | Lossy targets; health trend from ClickHouse, probes, nearby hops |
-| **Transit & Hops** | AS→AS transit ranking + high-latency hop hotspots (transit-issue detection) |
+| **Transit & Hops** | Clickable AS→AS relationships with probe/measurement evidence, loss + RTT history, boundary hops, and high-latency hotspot exploration |
 | **Path Explorer** | Network path between two IPs with per-hop RTT + ASN |
 | **Topology** | Interactive force-directed subgraph around a seed AS/probe/target |
 | **Alerts** | Rule builder, firing alerts, event history (see below) |
@@ -128,8 +134,8 @@ Every element drills down with context-preserving filters.
 
 All endpoints return `{data, error, meta}` envelopes. Full surface:
 
-> **Note:** `GET /api/overview` runs several full-graph aggregations that grow
-> slower as FalkorDB ingests more data. It is served from a background-refreshed
+> **Note:** `GET /api/overview` uses recent observations for health while keeping
+> inventory counts separate. It is served from a background-refreshed
 > in-memory cache (`--overview-refresh`, default 1m): the page returns instantly,
 > and each background refresh logs its elapsed time (`cache refresh ok took_ms=…`).
 > The response's `meta` block reports `cached`, `stale`, `took_ms`, and `last_ok`.
@@ -144,6 +150,7 @@ GET /api/targets | /api/target/{addr}
 GET /api/ip/{addr}                         # IP node + incident NEXT_HOP edges
 GET /api/hops/hotspots?min_rtt=100         # transit hotspot edges
 GET /api/transit | /api/transit/{a}/{b}    # AS→AS transit edges + pair detail
+GET /api/transit/{a}/{b}/series             # pair-scoped historical loss + RTT cohort
 GET /api/path?src=&dst=                    # traceroute path between IPs
 GET /api/path/destinations?src=            # destinations reachable from src (constrains the picker)
 GET /api/search?q=&limit=                  # typeahead: AS by org/ASN, IP prefix, probe id
@@ -207,6 +214,12 @@ curl -X POST localhost:8080/api/alerts/rules -H 'Content-Type: application/json'
 | `--falkor-addr` | `localhost:6379` | FalkorDB `host:port` |
 | `--falkor-graph` | `ripestream` | FalkorDB graph name |
 | `--falkor-password` | _none_ | FalkorDB password |
+| `--graph-active-window` | `30m` | recent interval that contributes to live health and alerts |
+| `--graph-retention` | `6h` | prune older FalkorDB observations (`0` disables) |
+| `--graph-prune-interval` | `15m` | how often to prune stale graph data in bounded batches |
+| `--probe-metadata-enabled` | `true` | cache public RIPE Atlas inventory details on probe nodes |
+| `--probe-api-url` | RIPE Atlas probes API | probe inventory endpoint |
+| `--probe-metadata-refresh` | `24h` | how often cached probe inventory is refreshed |
 | `--asn-db` | `geolite/GeoLite2-ASN.mmdb` | GeoLite2-ASN `.mmdb` path (empty disables enrichment) |
 | `--msm` | _empty_ | comma-separated measurement IDs (empty = firehose) |
 | `--prb` | _empty_ | comma-separated probe IDs |

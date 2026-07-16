@@ -17,30 +17,32 @@ import (
 // It normalizes both detected graph patterns and active alerts into one shape so
 // the Attention page can rank them by actionability.
 type Issue struct {
-	ID          string            `json:"id"`            // stable domain key, e.g. "dst-as:13335"
-	Kind        string            `json:"kind"`          // destination_wide_loss | source_network_loss | asn_pair_loss | latency_hotspot | alert
-	Severity    string            `json:"severity"`      // critical | high | watch
-	Title       string            `json:"title"`         // plain-language
-	Summary     string            `json:"summary"`       // e.g. "92% loss from 43 probes in 8 source ASes"
-	LossPct     float64           `json:"loss_pct"`
-	AvgRttMs    float64           `json:"avg_rtt_ms,omitempty"`
-	ProbeCount  int64             `json:"probe_count"`
-	TargetCount int64             `json:"target_count,omitempty"`
-	SampleCount int64             `json:"sample_count"`
-	LastSeen    int64             `json:"last_seen"`     // unix seconds
-	Confidence  string            `json:"confidence"`    // high | medium | low
-	Href        string            `json:"href"`          // existing detail route
-	Evidence    []string          `json:"evidence"`      // human-readable evidence lines
-	Source      string            `json:"source"`        // detected | alert
+	ID          string   `json:"id"`       // stable domain key, e.g. "dst-as:13335"
+	Kind        string   `json:"kind"`     // destination_wide_loss | source_network_loss | asn_pair_loss | latency_hotspot | alert
+	Severity    string   `json:"severity"` // critical | high | watch
+	Title       string   `json:"title"`    // plain-language
+	Summary     string   `json:"summary"`  // e.g. "92% loss from 43 probes in 8 source ASes"
+	LossPct     float64  `json:"loss_pct"`
+	AvgRttMs    float64  `json:"avg_rtt_ms,omitempty"`
+	ProbeCount  int64    `json:"probe_count"`
+	TargetCount int64    `json:"target_count,omitempty"`
+	SampleCount int64    `json:"sample_count"`
+	LastSeen    int64    `json:"last_seen"`  // unix seconds
+	Confidence  string   `json:"confidence"` // high | medium | low
+	Href        string   `json:"href"`       // existing detail route
+	Evidence    []string `json:"evidence"`   // human-readable evidence lines
+	Source      string   `json:"source"`     // detected | alert
 }
 
 // Minimum-evidence thresholds. Detected issues below these are suppressed to
 // avoid single-probe/single-sample noise. Named constants, not magic numbers.
 const (
-	minProbesForIssue  = 2  // need at least 2 probes to call something broad
-	minSamplesForIssue = 3  // need at least 3 samples for confidence
-	criticalLossPct    = 80 // >= this with sufficient evidence is critical
-	highLossPct        = 20 // >= this is high
+	minProbesForIssue           = 3  // consensus, not a pair of potentially bad probes
+	minSamplesForIssue          = 5  // enough independent current edges to rank
+	minSourceASesForDestination = 2  // destination incidents must cross source networks
+	minTargetsForSourceIssue    = 3  // distinguish a source outage from one bad endpoint
+	criticalLossPct             = 80 // >= this with sufficient evidence is critical
+	highLossPct                 = 20 // >= this is high
 )
 
 // issues handles GET /api/issues?severity=&limit=&range=1h|24h|7d
@@ -49,6 +51,10 @@ const (
 // detected destination-AS issues are augmented with a ClickHouse window summary
 // (loss over the selected window + baseline change) as additional evidence.
 func (s *Server) issues(w http.ResponseWriter, r *http.Request) {
+	if s.graph == nil {
+		respondError(w, http.StatusServiceUnavailable, "graph is disabled")
+		return
+	}
 	limit := qInt(r, "limit", 10)
 	if limit < 1 {
 		limit = 10
@@ -113,28 +119,30 @@ func (s *Server) detectIssues(ctx context.Context) []Issue {
 	// Destination-wide loss: many sources failing to one dst AS.
 	if dst, err := s.graph.ASNIssues(ctx, graph.ASNIssueFilter{
 		Role: "dst", MinLoss: 0.2, MinProbes: minProbesForIssue,
-		Limit: 10, Sort: "impact", Order: "desc",
+		MinSourceASes: minSourceASesForDestination,
+		Limit:         10, Sort: "impact", Order: "desc",
 	}); err == nil {
 		for _, a := range dst {
-			if a.Probes < minProbesForIssue || a.Samples < minSamplesForIssue {
+			if a.Probes < minProbesForIssue || a.Samples < minSamplesForIssue || a.SourceASes < minSourceASesForDestination {
 				continue
 			}
 			issues = append(issues, Issue{
-				ID:         fmt.Sprintf("dst-as:%d", a.ASN),
-				Kind:       "destination_wide_loss",
-				Severity:   severityFromLoss(a.AvgLossPct, a.Probes),
-				Title:      fmt.Sprintf("High loss to AS%d (%s)", a.ASN, orgOr(a.Org, a.ASN)),
-				Summary:    fmt.Sprintf("%.0f%% loss from %d probes across %d samples", a.AvgLossPct, a.Probes, a.Samples),
-				LossPct:    a.AvgLossPct,
-				AvgRttMs:   a.AvgRttMs,
-				ProbeCount: a.Probes,
+				ID:          fmt.Sprintf("dst-as:%d", a.ASN),
+				Kind:        "destination_wide_loss",
+				Severity:    severityFromLoss(a.AvgLossPct, a.Probes),
+				Title:       fmt.Sprintf("High loss to AS%d (%s)", a.ASN, orgOr(a.Org, a.ASN)),
+				Summary:     fmt.Sprintf("%.0f%% loss from %d probes in %d source networks", a.AvgLossPct, a.Probes, a.SourceASes),
+				LossPct:     a.AvgLossPct,
+				AvgRttMs:    a.AvgRttMs,
+				ProbeCount:  a.Probes,
 				SampleCount: a.Samples,
-				LastSeen:   a.LastSeen,
-				Confidence: confidenceFrom(a.Probes, a.Samples),
-				Href:       fmt.Sprintf("/asn/%d", a.ASN),
+				LastSeen:    a.LastSeen,
+				Confidence:  confidenceFrom(a.Probes, a.Samples),
+				Href:        fmt.Sprintf("/asn/%d", a.ASN),
 				Evidence: []string{
-					fmt.Sprintf("%d probes observe loss to this destination AS", a.Probes),
+					fmt.Sprintf("%d probes across %d source ASes agree", a.Probes, a.SourceASes),
 					fmt.Sprintf("%.0f%% average, %.0f%% max loss across %d samples", a.AvgLossPct, a.MaxLossPct, a.Samples),
+					"Probes failing across most active targets are excluded from destination-wide detection",
 				},
 				Source: "detected",
 			})
@@ -149,24 +157,24 @@ func (s *Server) detectIssues(ctx context.Context) []Issue {
 		Limit: 5, Sort: "impact", Order: "desc",
 	}); err == nil {
 		for _, a := range src {
-			if a.Probes < minProbesForIssue || a.Samples < minSamplesForIssue {
+			if a.Probes < minProbesForIssue || a.Samples < minSamplesForIssue || a.Targets < minTargetsForSourceIssue {
 				continue
 			}
 			issues = append(issues, Issue{
-				ID:         fmt.Sprintf("src-as:%d", a.ASN),
-				Kind:       "source_network_loss",
-				Severity:   severityFromLoss(a.AvgLossPct, a.Probes),
-				Title:      fmt.Sprintf("Loss from AS%d (%s)", a.ASN, orgOr(a.Org, a.ASN)),
-				Summary:    fmt.Sprintf("%.0f%% loss across %d samples from this source network", a.AvgLossPct, a.Samples),
-				LossPct:    a.AvgLossPct,
-				ProbeCount: a.Probes,
+				ID:          fmt.Sprintf("src-as:%d", a.ASN),
+				Kind:        "source_network_loss",
+				Severity:    severityFromLoss(a.AvgLossPct, a.Probes),
+				Title:       fmt.Sprintf("Loss from AS%d (%s)", a.ASN, orgOr(a.Org, a.ASN)),
+				Summary:     fmt.Sprintf("%.0f%% loss across %d targets from this source network", a.AvgLossPct, a.Targets),
+				LossPct:     a.AvgLossPct,
+				ProbeCount:  a.Probes,
 				SampleCount: a.Samples,
-				LastSeen:   a.LastSeen,
-				Confidence: confidenceFrom(a.Probes, a.Samples),
-				Href:       fmt.Sprintf("/asn/%d", a.ASN),
+				LastSeen:    a.LastSeen,
+				Confidence:  confidenceFrom(a.Probes, a.Samples),
+				Href:        fmt.Sprintf("/asn/%d", a.ASN),
 				Evidence: []string{
 					fmt.Sprintf("%d probes in this source AS observe loss", a.Probes),
-					fmt.Sprintf("%.0f%% average loss across %d samples", a.AvgLossPct, a.Samples),
+					fmt.Sprintf("%.0f%% average loss across %d targets", a.AvgLossPct, a.Targets),
 				},
 				Source: "detected",
 			})
@@ -184,6 +192,9 @@ func (s *Server) detectIssues(ctx context.Context) []Issue {
 // that target over the selected range. Issues without a resolvable target are
 // left unchanged. Failures degrade gracefully (no augmentation).
 func (s *Server) augmentWithWindows(ctx context.Context, issues []Issue, rangeStr string) []Issue {
+	if s.ch == nil {
+		return issues
+	}
 	dur, ok := parseRange(rangeStr)
 	if !ok {
 		return issues
@@ -227,8 +238,14 @@ func (s *Server) augmentWithWindows(ctx context.Context, issues []Issue, rangeSt
 // parseRange maps a range shorthand to a duration.
 func parseRange(s string) (time.Duration, bool) {
 	switch s {
+	case "15m":
+		return 15 * time.Minute, true
+	case "30m":
+		return 30 * time.Minute, true
 	case "1h":
 		return time.Hour, true
+	case "6h":
+		return 6 * time.Hour, true
 	case "24h":
 		return 24 * time.Hour, true
 	case "7d":
@@ -239,16 +256,18 @@ func parseRange(s string) (time.Duration, bool) {
 func alertToIssue(a AlertView) Issue {
 	scope, href := parseAlertScope(a.ScopeKey)
 	return Issue{
-		ID:       "alert:" + strconv.FormatInt(a.RuleID, 10) + ":" + a.ScopeKey,
-		Kind:     "alert",
-		Severity: severityFromLoss(a.Value, 0), // value is a percentage
-		Title:    a.RuleName,
-		Summary:  fmt.Sprintf("Alert firing: %.0f on %s", a.Value, scope),
-		LossPct:  a.Value,
-		Href:     href,
-		Source:   "alert",
-		LastSeen: alertFiredEpoch(a.FiredAt),
-		Evidence: []string{fmt.Sprintf("Rule %q is firing at %.0f", a.RuleName, a.Value)},
+		ID:          "alert:" + strconv.FormatInt(a.RuleID, 10) + ":" + a.ScopeKey,
+		Kind:        "alert",
+		Severity:    severityFromLoss(a.Value, 0), // value is a percentage
+		Title:       a.RuleName,
+		Summary:     fmt.Sprintf("Alert firing: %.0f on %s", a.Value, scope),
+		LossPct:     a.Value,
+		Href:        href,
+		Source:      "alert",
+		Confidence:  "high",
+		SampleCount: 1,
+		LastSeen:    alertFiredEpoch(a.FiredAt),
+		Evidence:    []string{fmt.Sprintf("Rule %q is firing at %.0f", a.RuleName, a.Value)},
 	}
 }
 
