@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Dynamic from "./_ForceGraphLazy";
 import { api, type GraphEdge, type GraphNode } from "@/api/client";
@@ -52,6 +51,35 @@ export function TopologyPage() {
   const [loading, setLoading] = useState(false);
   const [meta, setMeta] = useState("");
   const fgRef = useRef<unknown>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ width: 800, height: 480 });
+
+  // Measure the container so react-force-graph renders at the right canvas size
+  // (it doesn't reliably auto-size to a CSS container, causing overflow/offset).
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (cr && cr.width > 0) setDims({ width: Math.round(cr.width), height: 480 });
+    });
+    ro.observe(el);
+    // Initial measurement.
+    const r = el.getBoundingClientRect();
+    if (r.width > 0) setDims({ width: Math.round(r.width), height: 480 });
+    return () => ro.disconnect();
+  }, []);
+
+  // After data loads, zoom-to-fit so the graph is centered and visible.
+  useEffect(() => {
+    if (nodes.length === 0 || showList) return;
+    // The force graph needs a tick to settle before zoomToFit can find bounds.
+    const t = setTimeout(() => {
+      const fg = fgRef.current as { zoomToFit?: (ms?: number, pad?: number) => void } | null;
+      fg?.zoomToFit?.(400, 40);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [nodes, showList]);
 
   async function load(e: React.FormEvent) {
     e.preventDefault();
@@ -189,10 +217,12 @@ export function TopologyPage() {
               </div>
             </div>
           ) : (
-            <div className="h-[480px] w-full rounded-lg bg-bg-primary">
+            <div ref={containerRef} className="h-[480px] w-full overflow-hidden rounded-lg bg-bg-primary">
               {nodes.length > 0 ? (
                 <Dynamic
                   graphData={graphData}
+                  width={dims.width}
+                  height={dims.height}
                   nodeRelSize={6}
                   nodeColor={(n: { kind?: string }) => KIND_COLOR[n.kind ?? "ip"] ?? "#667085"}
                   nodeLabel="label"
