@@ -1,8 +1,15 @@
 /ripestream
 /ripestream.exe
+/ripestream.db
 /dist/
 *.log
 .DS_Store
 # MaxMind GeoLite2 databases (do not redistribute)
 geolite/*.mmdb
 *.mmdb
+
+# Frontend (web/) build artifacts — built into web/dist and embedded via //go:embed
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
+

@@ -10,9 +10,11 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"flag"
+	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -22,12 +24,18 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"ripestream/internal/alert"
+	"ripestream/internal/api"
 	"ripestream/internal/asn"
 	"ripestream/internal/atlas"
 	"ripestream/internal/graph"
 	"ripestream/internal/pipeline"
 	"ripestream/internal/store"
+	"ripestream/internal/web"
 )
+
+//go:embed web/dist/*
+var webDist embed.FS
 
 //go:embed schema.sql
 var schemaSQL string
@@ -51,6 +59,12 @@ func main() {
 		flushInterval = flag.Duration("flush-interval", 5*time.Second, "max time between flushes")
 		idleTimeout   = flag.Duration("idle-timeout", 5*time.Minute, "reconnect a connection after this long with no data (0 disables)")
 		applySchema   = flag.Bool("apply-schema", true, "apply schema.sql on startup if true")
+		httpAddr      = flag.String("http-addr", envDefault("RIPESTREAM_HTTP_ADDR", ":8080"), "HTTP address for the API + UI server (empty disables)")
+		uiEnabled     = flag.Bool("ui-enabled", envBoolDefault("RIPESTREAM_UI_ENABLED", true), "serve the embedded web UI at /")
+		dbPath        = flag.String("db-path", envDefault("RIPESTREAM_DB_PATH", "ripestream.db"), "SQLite path for alert state (rule defs, states, events)")
+		alertEnabled  = flag.Bool("alert-enabled", envBoolDefault("RIPESTREAM_ALERT_ENABLED", true), "run the alerting evaluator")
+		alertInterval = flag.Duration("alert-interval", time.Minute, "how often the alert evaluator ticks")
+		overviewRefresh = flag.Duration("overview-refresh", 60*time.Second, "how often to recompute the cached overview query")
 		logLevel      = flag.String("log-level", envDefault("RIPESTREAM_LOG_LEVEL", "info"), "log level: debug|info|warn|error")
 	)
 	flag.Parse()
@@ -151,11 +165,85 @@ func main() {
 		})
 	}
 
+	// HTTP API + UI server. Runs in the same errgroup so it shuts down with the
+	// rest of the process. Ingestion continues regardless of the graph being
+	// enabled: the API degrades gracefully (endpoints return 503 when the graph
+	// reader is unavailable).
+	if *httpAddr != "" {
+		var graphReader graph.Reader
+		if gs != nil {
+			graphReader = gs // *Store implements graph.Reader
+		}
+		chReader := st // *store.Store implements store.Reader
+
+		// Alerting subsystem: open SQLite store, build manager (for the API), and
+		// start the evaluator goroutine (needs the graph reader). Disabled or
+		// graph-less deployments skip this; alert endpoints then return 503.
+		var alerter api.Alerter
+		if *alertEnabled && gs != nil {
+			alertStore, err := alert.Open(*dbPath)
+			if err != nil {
+				slog.Error("alert store open failed", "err", err, "path", *dbPath)
+				os.Exit(1)
+			}
+			defer alertStore.Close()
+			alerter = alert.NewManager(alertStore)
+			ev := alert.NewEvaluator(alertStore, gs, *alertInterval)
+			g.Go(func() error {
+				ev.Run(gctx)
+				return nil
+			})
+			slog.Info("alerting enabled", "db", *dbPath, "interval", *alertInterval)
+		}
+
+		startHTTP(gctx, g, *httpAddr, *uiEnabled, graphReader, chReader, alerter, *overviewRefresh)
+	}
+
 	if err := g.Wait(); err != nil && err != context.Canceled {
 		slog.Error("writer exited with error", "err", err)
 		os.Exit(1)
 	}
 	slog.Info("ripestream stopped cleanly")
+}
+
+// startHTTP builds the API server, optionally mounts the embedded UI at /, and
+// runs it in the errgroup. graphReader/alerter may be nil (endpoints return 503).
+func startHTTP(ctx context.Context, g *errgroup.Group, addr string, uiEnabled bool, gr graph.Reader, ch store.Reader, alerter api.Alerter, overviewTTL time.Duration) {
+	srv := api.New(gr, ch, alerter, overviewTTL)
+	srv.StartCache(ctx) // background overview refresher; logs each refresh's duration
+	defer srv.StopCache()
+	root := srv.Handler()
+	if uiEnabled {
+		distFS, err := fs.Sub(webDist, "web/dist")
+		if err != nil {
+			slog.Error("ui embed failed", "err", err)
+			os.Exit(1)
+		}
+		ui := web.Handler(distFS)
+		root = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
+				srv.Handler().ServeHTTP(w, r)
+				return
+			}
+			ui.ServeHTTP(w, r)
+		})
+	}
+	g.Go(func() error {
+		httpSrv := &http.Server{
+			Addr: addr, Handler: root, ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			<-ctx.Done()
+			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = httpSrv.Shutdown(shutdown)
+		}()
+		slog.Info("http server listening", "addr", addr, "ui", uiEnabled)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	})
 }
 
 func setupLogger(level string) {

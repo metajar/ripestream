@@ -81,6 +81,120 @@ on `IP.addr`, `Probe.id`, and `AS.asn` are ensured on startup. Place
 
 FalkorDB Browser UI (compose): http://localhost:3000
 
+## Web UI & API
+
+The binary also serves an observability dashboard and JSON API (dark-mode,
+Untitled-UI-styled) at the `--http-addr` (default `:8080`). With the UI enabled,
+both ship from one process — the built Vite bundle is embedded via `//go:embed`.
+
+```
+http://localhost:8080/          # web UI (SPA)
+http://localhost:8080/api/...   # JSON API
+```
+
+### Running the UI in development
+
+Hot-reloading frontend dev server that proxies `/api` to the Go server:
+
+```bash
+cd web && npm install && npm run dev    # Vite on :5173
+./ripestream --password ripestream      # Go API on :8080 (in another shell)
+```
+
+To embed a production build into the binary:
+
+```bash
+cd web && npm run build                 # emits web/dist/
+go build -o ripestream .                # embeds web/dist/ into the binary
+./ripestream --password ripestream      # serves UI + API from :8080
+```
+
+### Dashboard pages
+
+| Page | What it shows |
+| --- | --- |
+| **Overview** | KPIs (probes/targets/ASes/IPs), global loss breakdown, top problematic source & destination ASes, lossiest AS pairs |
+| **ASNs** → **ASN detail** | Per-AS ranking by loss; drill into probes, targets, transit relationships |
+| **Probes** → **Probe detail** | Lossy probes; per-probe target health |
+| **Targets** → **Target detail** | Lossy targets; health trend from ClickHouse, probes, nearby hops |
+| **Transit & Hops** | AS→AS transit ranking + high-latency hop hotspots (transit-issue detection) |
+| **Path Explorer** | Network path between two IPs with per-hop RTT + ASN |
+| **Topology** | Interactive force-directed subgraph around a seed AS/probe/target |
+| **Alerts** | Rule builder, firing alerts, event history (see below) |
+
+Every element drills down with context-preserving filters.
+
+### JSON API
+
+All endpoints return `{data, error, meta}` envelopes. Full surface:
+
+> **Note:** `GET /api/overview` runs several full-graph aggregations that grow
+> slower as FalkorDB ingests more data. It is served from a background-refreshed
+> in-memory cache (`--overview-refresh`, default 1m): the page returns instantly,
+> and each background refresh logs its elapsed time (`cache refresh ok took_ms=…`).
+> The response's `meta` block reports `cached`, `stale`, `took_ms`, and `last_ok`.
+
+```
+GET /api/overview                         # internet-state summary
+GET /api/asn/issues?role=src|dst           # ranked ASes by loss
+GET /api/asn/{asn}                         # AS detail (probes, IPs, transit, loss)
+GET /api/asn/{asn}/probes|targets|transit
+GET /api/probes | /api/probe/{id}
+GET /api/targets | /api/target/{addr}
+GET /api/ip/{addr}                         # IP node + incident NEXT_HOP edges
+GET /api/hops/hotspots?min_rtt=100         # transit hotspot edges
+GET /api/transit | /api/transit/{a}/{b}    # AS→AS transit edges + pair detail
+GET /api/path?src=&dst=                    # traceroute path between IPs
+GET /api/path/destinations?src=            # destinations reachable from src (constrains the picker)
+GET /api/search?q=&limit=                  # typeahead: AS by org/ASN, IP prefix, probe id
+GET /api/graph/subgraph?asn=&depth=        # nodes+edges for topology viz
+GET /api/timeseries?target=&metric=        # bucketed history from ClickHouse
+GET /api/health | /api/schema              # liveness + graph model docs
+```
+
+## Alerting
+
+The alerting subsystem evaluates threshold rules against the live FalkorDB
+graph on a configurable interval (default every minute) and emits fire/resolve
+events. Rule definitions, evaluation state, and event history persist in an
+embedded SQLite database (`--db-path`, default `ripestream.db`).
+
+A rule combines a **metric** (`loss_ratio`, `avg_rtt_ms`, or `target_lost`), a
+**comparison** + **threshold**, a **scope** (`asn_dst`, `asn_pair`, `target`, or
+`probe_target`), and optional **filters** (probe, ASN, target IP, min sent/loss).
+At each tick the evaluator runs one Cypher per rule, grouped by scope, and:
+
+- **fires** when a scope instance crosses the threshold (records an event with a
+  cause-context snapshot: the ASN/org, avg loss/RTT, probe & sample counts — so
+  the operator can jump straight into the relevant ASN/target/hop view);
+- **resolves** when a previously-firing instance drops back under threshold.
+
+No notifications are sent yet — alerts surface only on the **Alerts** dashboard
+page (active list + event history). Rules are managed there or via the API:
+
+```
+GET    /api/alerts/rules              POST   /api/alerts/rules
+GET    /api/alerts/rules/{id}         PUT    /api/alerts/rules/{id}
+DELETE /api/alerts/rules/{id}
+GET    /api/alerts/active             # currently firing
+GET    /api/alerts/states             # per-scope evaluation state
+GET    /api/alerts/events             # fire/resolve history
+```
+
+Example: alert when any destination AS averages ≥ 80% loss:
+
+```bash
+curl -X POST localhost:8080/api/alerts/rules -H 'Content-Type: application/json' -d '{
+  "name": "High dst-AS loss",
+  "metric": "loss_ratio",
+  "comparison": ">=",
+  "threshold": 80,
+  "scope": "asn_dst",
+  "enabled": true
+}'
+```
+
+
 ### Flags
 
 | flag | default | description |
@@ -101,6 +215,12 @@ FalkorDB Browser UI (compose): http://localhost:3000
 | `--flush-interval` | `5s` | max time between flushes |
 | `--idle-timeout` | `5m` | reconnect a connection after this long with no data (0 disables) |
 | `--apply-schema` | `true` | apply `schema.sql` on startup |
+| `--http-addr` | `:8080` | HTTP address for the API + UI server (empty disables) |
+| `--ui-enabled` | `true` | serve the embedded web UI at `/` |
+| `--db-path` | `ripestream.db` | SQLite path for alert state (rules, states, events) |
+| `--alert-enabled` | `true` | run the alerting evaluator (needs FalkorDB) |
+| `--alert-interval` | `1m` | how often the alert evaluator ticks |
+| `--overview-refresh` | `1m` | how often to recompute the cached overview query |
 | `--log-level` | `info` | `debug`\|`info`\|`warn`\|`error` |
 
 Each flag also reads an env var of the same upper-snake-cased name prefixed with
@@ -180,15 +300,19 @@ RETURN ip.addr, ip.last_seen LIMIT 100
 ## Project layout
 
 ```
-main.go                      config, signal handling, dual-sink orchestration
+main.go                      config, signal handling, dual-sink + API/UI orchestration
 schema.sql                   ClickHouse DDL (embedded into the binary)
 docker-compose.yml           ClickHouse + FalkorDB
 geolite/GeoLite2-ASN.mmdb    MaxMind ASN DB (local; gitignored)
+web/                         Vite + React + Tailwind v4 frontend (embedded via //go:embed)
 internal/atlas/stream.go     stream reader + reconnect/idle handling
 internal/pipeline/tee.go     non-blocking fan-out to sinks
-internal/store/store.go      batched ClickHouse HTTP writer
-internal/graph/              FalkorDB traceroute/ping topology writer
+internal/store/              batched ClickHouse HTTP writer + read queries (timeseries)
+internal/graph/              FalkorDB traceroute/ping topology writer + read queries
 internal/asn/                GeoLite2-ASN lookup
+internal/api/                HTTP API server (stdlib net/http, Go 1.25 ServeMux)
+internal/alert/              alerting engine (SQLite store + evaluator)
+internal/web/                embedded UI SPA handler
 ```
 # Some Graph Queries taht are super useful
 

@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+/*
+ * Untitled UI — Dark Mode tokens, mapped into Tailwind v4 @theme.
+ * These mirror Untitled UI's published dark palette:
+ *   - bg base / surfaces use their "gray dark" scale (cool-neutral)
+ *   - primary accent = Untitled's "brand" (indigo-violet 500)
+ *   - semantic colors (success/error/warning) match their dark variants
+ * Reference: untitledui.com (design tokens)
+ */
+@theme {
+  /* Untitled dark background surfaces */
+  --color-bg-primary: #0c111c;
+  --color-bg-secondary: #161b26;
+  --color-bg-tertiary: #1d2330;
+  --color-bg-elevated: #212938;
+
+  /* Untitled dark borders */
+  --color-border-primary: #2a3142;
+  --color-border-secondary: #333b4f;
+
+  /* Untitled dark text */
+  --color-text-primary: #f5f7fa;
+  --color-text-secondary: #d0d5dd;
+  --color-text-tertiary: #98a2b3;
+  --color-text-quaternary: #667085;
+
+  /* Untitled brand (primary accent) */
+  --color-brand-50: #eef2ff;
+  --color-brand-300: #a5b4fc;
+  --color-brand-500: #6172f3;
+  --color-brand-600: #5145cd;
+  --color-brand-700: #3e3399;
+
+  /* Untitled semantic dark */
+  --color-success-500: #12b76a;
+  --color-success-600: #079455;
+  --color-error-500: #f04438;
+  --color-error-600: #d92d20;
+  --color-warning-500: #fdb022;
+  --color-warning-600: #dc6803;
+  --color-info-500: #2e90fa;
+
+  /* Untitled chart palette (for recharts series) */
+  --color-chart-1: #6172f3;
+  --color-chart-2: #12b76a;
+  --color-chart-3: #fdb022;
+  --color-chart-4: #f04438;
+  --color-chart-5: #2e90fa;
+  --color-chart-6: #ee46bc;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Untitled-style scrollbars for dark surfaces */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-secondary);
+  border-radius: 8px;
+  border: 2px solid var(--color-bg-primary);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-quaternary);
+}
