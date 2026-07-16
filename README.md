@@ -190,3 +190,25 @@ internal/store/store.go      batched ClickHouse HTTP writer
 internal/graph/              FalkorDB traceroute/ping topology writer
 internal/asn/                GeoLite2-ASN lookup
 ```
+# Some Graph Queries taht are super useful
+
+### Who can't talk to who
+
+```   
+MATCH (p:Probe)-[:LOCATED_AT]->(src:IP)-[:IN_AS]->(srcAS:AS)
+   MATCH (p)-[e:PING]->(t:IP)-[:IN_AS]->(dstAS:AS)
+   WHERE e.loss_ratio > 0.2
+     AND e.sent > 0
+   RETURN
+     srcAS.org                       AS src_org,
+     srcAS.asn                       AS src_asn,
+     dstAS.org                       AS dst_org,
+     dstAS.asn                       AS dst_asn,
+     count(*)                        AS samples,
+     round(100.0 * avg(e.loss_ratio)) AS avg_loss_pct,
+     round(100.0 * max(e.loss_ratio)) AS max_loss_pct,
+     round(avg(e.avg_rtt_ms))         AS avg_rtt_ms,
+     count(DISTINCT p.id)            AS probes
+   ORDER BY avg_loss_pct DESC, samples DESC
+   LIMIT 50;
+```
