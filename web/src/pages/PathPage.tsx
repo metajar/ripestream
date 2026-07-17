@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api, type GraphPath, type SearchResult } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { EmptyState, ErrorState, LoadingState, Spinner } from "@/components/ui/states";
 import { SearchSelect } from "@/components/SearchSelect";
 import { fmtRtt } from "@/lib/utils";
 
@@ -92,7 +92,7 @@ export function PathPage() {
               reachableFrom={src?.addr}
             />
             <Button type="submit" disabled={loading || !ready} className="shrink-0">
-              Trace
+              {loading ? <><Spinner size={14} /> Tracing</> : "Trace"}
             </Button>
           </form>
           {src?.addr && (

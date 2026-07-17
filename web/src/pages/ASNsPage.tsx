@@ -6,7 +6,7 @@ import { SeverityBadge, severityFromLossPct } from "@/components/health";
 import { DEFAULT_WORKLIST, WorklistToolbar, type WorklistState } from "@/components/WorklistToolbar";
 import { PaginationControls } from "@/components/PaginationControls";
 import { Card, CardContent } from "@/components/ui/card";
-import { EmptyState, ErrorState, Freshness, LoadingState } from "@/components/ui/states";
+import { EmptyState, ErrorState, FetchingOverlay, Freshness, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { fmtNum, fmtPct } from "@/lib/utils";
 
@@ -56,10 +56,11 @@ export function ASNsPage() {
     }, { replace: true });
   }
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData, error } = useQuery({
     queryKey: ["asn-issues", role, offset, state.sort, state.order, state.minProbes, query],
     queryFn: () => api.asnIssues(role, 25, offset, state.sort, state.order, state.minProbes, query),
   });
+  const pageBusy = isFetching && isPlaceholderData;
 
   return (
     <div className="space-y-4">
@@ -115,66 +116,70 @@ export function ASNsPage() {
               className="mt-1 block w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs text-text-primary outline-none focus:border-brand-500"
             />
           </label>
-          {isLoading && <LoadingState />}
+          {isLoading && <LoadingState label="Loading autonomous systems…" />}
           {error && <ErrorState message={(error as Error).message} />}
-          {data && data.data.length === 0 && (
-            <EmptyState
-              label="No ASes with notable observed loss"
-              hint={`No AS meets the current threshold (min ${state.minProbes} probes). Try lowering the minimum or this may indicate a healthy network.`}
-            />
-          )}
-          {data && data.data.length > 0 && (
-            <>
-            <Table>
-              <THead>
-                <tr>
-                  <Th>AS</Th>
-                  <Th>Organization</Th>
-                  <Th>Severity</Th>
-                  <Th className="text-right">Samples</Th>
-                  <Th className="text-right">Probes</Th>
-                  <Th className="text-right">Avg Loss</Th>
-                  <Th className="text-right">Last observed</Th>
-                </tr>
-              </THead>
-              <TBody>
-                {data.data.map((a) => (
-                  <Tr key={a.asn}>
-                    <Td>
-                      <Link
-                        to={`/asn/${a.asn}`}
-                        className="font-mono text-xs text-brand-300 hover:text-brand-500"
-                      >
-                        AS{a.asn}
-                      </Link>
-                    </Td>
-                    <Td className="text-text-primary">{a.org || "—"}</Td>
-                    <Td>
-                      <SeverityBadge severity={severityFromLossPct(a.avg_loss_pct)} />
-                    </Td>
-                    <Td className="text-right font-mono text-xs">{fmtNum(a.samples)}</Td>
-                    <Td className="text-right font-mono text-xs">{fmtNum(a.probes)}</Td>
-                    <Td className="text-right font-mono text-xs font-medium">
-                      {fmtPct(a.avg_loss_pct)}
-                    </Td>
-                    <Td className="text-right text-xs">
-                      <Freshness sec={a.last_seen} />
-                    </Td>
-                  </Tr>
-                ))}
-              </TBody>
-            </Table>
-            <PaginationControls
-              meta={data.meta}
-              rowCount={data.data.length}
-              noun="ASes"
-              onPage={(nextOffset) => setSearchParams((prev) => {
-                const next = new URLSearchParams(prev);
-                if (nextOffset) next.set("offset", String(nextOffset)); else next.delete("offset");
-                return next;
-              }, { replace: true })}
-            />
-            </>
+          {data && (
+            <div className="relative">
+              <FetchingOverlay active={pageBusy} label="Loading page…" />
+              {data.data.length === 0 ? (
+                <EmptyState
+                  label="No ASes with notable observed loss"
+                  hint={`No AS meets the current threshold (min ${state.minProbes} probes). Try lowering the minimum or this may indicate a healthy network.`}
+                />
+              ) : (
+                <>
+                  <Table>
+                    <THead>
+                      <tr>
+                        <Th>AS</Th>
+                        <Th>Organization</Th>
+                        <Th>Severity</Th>
+                        <Th className="text-right">Samples</Th>
+                        <Th className="text-right">Probes</Th>
+                        <Th className="text-right">Avg Loss</Th>
+                        <Th className="text-right">Last observed</Th>
+                      </tr>
+                    </THead>
+                    <TBody>
+                      {data.data.map((a) => (
+                        <Tr key={a.asn}>
+                          <Td>
+                            <Link
+                              to={`/asn/${a.asn}`}
+                              className="font-mono text-xs text-brand-300 hover:text-brand-500"
+                            >
+                              AS{a.asn}
+                            </Link>
+                          </Td>
+                          <Td className="text-text-primary">{a.org || "—"}</Td>
+                          <Td>
+                            <SeverityBadge severity={severityFromLossPct(a.avg_loss_pct)} />
+                          </Td>
+                          <Td className="text-right font-mono text-xs">{fmtNum(a.samples)}</Td>
+                          <Td className="text-right font-mono text-xs">{fmtNum(a.probes)}</Td>
+                          <Td className="text-right font-mono text-xs font-medium">
+                            {fmtPct(a.avg_loss_pct)}
+                          </Td>
+                          <Td className="text-right text-xs">
+                            <Freshness sec={a.last_seen} />
+                          </Td>
+                        </Tr>
+                      ))}
+                    </TBody>
+                  </Table>
+                  <PaginationControls
+                    meta={data.meta}
+                    rowCount={data.data.length}
+                    noun="ASes"
+                    onPage={(nextOffset) => setSearchParams((prev) => {
+                      const next = new URLSearchParams(prev);
+                      if (nextOffset) next.set("offset", String(nextOffset)); else next.delete("offset");
+                      return next;
+                    }, { replace: true })}
+                  />
+                </>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>

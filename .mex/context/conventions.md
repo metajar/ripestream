@@ -13,7 +13,7 @@ edges:
     condition: when a convention depends on understanding the system structure
   - target: patterns/INDEX.md
     condition: when looking for task-specific patterns that enforce conventions
-last_updated: 2025-01-16
+last_updated: 2026-07-17
 ---
 
 # Conventions
@@ -42,6 +42,7 @@ last_updated: 2025-01-16
 - **HTTP handlers**: use Go 1.25 ServeMux patterns (`"GET /api/overview"`), separate handler functions, recoverPanic middleware wrapper.
 - **API responses**: use structured responses from `internal/api/respond.go`, consistent JSON shape.
 - **React Query**: use `useQuery` for data fetching, automatic refetch on interval, `keepPreviousData` for smooth transitions.
+- **Loading UI**: use `Spinner` / `LoadingState` / `FetchingOverlay` from `components/ui/states` (RJ45 cable mark). Show `FetchingOverlay` when `isFetching && isPlaceholderData` so pagination/filter changes are visible without blanking the prior page or flashing on background refetches.
 
 ## Verify Checklist
 Before presenting any code:

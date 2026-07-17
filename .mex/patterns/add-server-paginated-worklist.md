@@ -19,10 +19,12 @@ last_updated: 2026-07-17
 - Include the offset and all filters in the TanStack Query key and request.
 - Reset the offset to zero whenever a filter, tab, role, sort, or direction changes.
 - Preserve the previous page while the next request loads, then render Previous/Next from response metadata.
+- While `isFetching && isPlaceholderData`, show `FetchingOverlay` (RJ45 cable spinner) over the preserved rows — do not blank the table, and do not spin on background same-key refetches.
 - Disable polling on worklists where live reorderings would disrupt an active investigation, especially Probes.
 
 ## Verify
 
 - Test page-size clamping and sentinel trimming.
 - Test sort whitelist fallbacks with hostile input.
+- Confirm pagination/filter changes show the networking spinner overlay without wiping the prior page.
 - Run `go test ./...` and `npm run build` in `web/`.

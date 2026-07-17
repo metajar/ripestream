@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PaginationControls } from "@/components/PaginationControls";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { EmptyState, ErrorState, FetchingOverlay, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { fmtEpoch, fmtNum, fmtRtt } from "@/lib/utils";
 
@@ -114,103 +114,111 @@ export function TransitPage() {
         <CardContent>
           {tab === "transit" ? (
             <>
-              {transit.isLoading && <LoadingState />}
+              {transit.isLoading && <LoadingState label="Loading transit paths…" />}
               {transit.error && <ErrorState message={(transit.error as Error).message} />}
-              {transit.data && transit.data.data.length === 0 && (
-                <EmptyState label="No matching transit paths" hint="Try clearing the field filter or changing the sort." />
-              )}
-              {transit.data && transit.data.data.length > 0 && (
-                <>
-                <Table>
-                  <THead>
-                    <tr>
-                      <Th>From</Th>
-                      <Th>To</Th>
-                      <Th className="text-right">Observations</Th>
-                      <Th className="text-right">Last observed</Th>
-                    </tr>
-                  </THead>
-                  <TBody>
-                    {transit.data.data.map((t) => (
-                      <Tr
-                        key={`${t.src_asn}-${t.dst_asn}`}
-                        role="link"
-                        tabIndex={0}
-                        aria-label={`View ${t.src_org || `AS${t.src_asn}`} to ${t.dst_org || `AS${t.dst_asn}`} relationship`}
-                        className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
-                        onClick={() => navigate(`/transit/${t.src_asn}/${t.dst_asn}`)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            navigate(`/transit/${t.src_asn}/${t.dst_asn}`);
-                          }
-                        }}
-                      >
-                        <Td>
-                          <Link to={`/transit/${t.src_asn}/${t.dst_asn}`} className="hover:text-brand-300">
-                            <span className="text-text-primary">{t.src_org || `AS${t.src_asn}`}</span>{" "}
-                            <span className="text-xs text-text-quaternary">AS{t.src_asn}</span>
-                          </Link>
-                        </Td>
-                        <Td>
-                          <Link to={`/transit/${t.src_asn}/${t.dst_asn}`} className="hover:text-brand-300">
-                            <span className="text-text-primary">{t.dst_org || `AS${t.dst_asn}`}</span>{" "}
-                            <span className="text-xs text-text-quaternary">AS{t.dst_asn}</span>
-                          </Link>
-                        </Td>
-                        <Td className="text-right font-mono text-xs">{fmtNum(t.seen_count)}</Td>
-                        <Td className="text-right font-mono text-xs text-text-tertiary">{fmtEpoch(t.last_seen)}</Td>
-                      </Tr>
-                    ))}
-                  </TBody>
-                </Table>
-                <PaginationControls meta={transit.data.meta} rowCount={transit.data.data.length} noun="transit paths" onPage={setTransitOffset} />
-                </>
+              {transit.data && (
+                <div className="relative">
+                  <FetchingOverlay active={transit.isFetching && transit.isPlaceholderData} label="Loading page…" />
+                  {transit.data.data.length === 0 ? (
+                    <EmptyState label="No matching transit paths" hint="Try clearing the field filter or changing the sort." />
+                  ) : (
+                    <>
+                      <Table>
+                        <THead>
+                          <tr>
+                            <Th>From</Th>
+                            <Th>To</Th>
+                            <Th className="text-right">Observations</Th>
+                            <Th className="text-right">Last observed</Th>
+                          </tr>
+                        </THead>
+                        <TBody>
+                          {transit.data.data.map((t) => (
+                            <Tr
+                              key={`${t.src_asn}-${t.dst_asn}`}
+                              role="link"
+                              tabIndex={0}
+                              aria-label={`View ${t.src_org || `AS${t.src_asn}`} to ${t.dst_org || `AS${t.dst_asn}`} relationship`}
+                              className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+                              onClick={() => navigate(`/transit/${t.src_asn}/${t.dst_asn}`)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  navigate(`/transit/${t.src_asn}/${t.dst_asn}`);
+                                }
+                              }}
+                            >
+                              <Td>
+                                <Link to={`/transit/${t.src_asn}/${t.dst_asn}`} className="hover:text-brand-300">
+                                  <span className="text-text-primary">{t.src_org || `AS${t.src_asn}`}</span>{" "}
+                                  <span className="text-xs text-text-quaternary">AS{t.src_asn}</span>
+                                </Link>
+                              </Td>
+                              <Td>
+                                <Link to={`/transit/${t.src_asn}/${t.dst_asn}`} className="hover:text-brand-300">
+                                  <span className="text-text-primary">{t.dst_org || `AS${t.dst_asn}`}</span>{" "}
+                                  <span className="text-xs text-text-quaternary">AS{t.dst_asn}</span>
+                                </Link>
+                              </Td>
+                              <Td className="text-right font-mono text-xs">{fmtNum(t.seen_count)}</Td>
+                              <Td className="text-right font-mono text-xs text-text-tertiary">{fmtEpoch(t.last_seen)}</Td>
+                            </Tr>
+                          ))}
+                        </TBody>
+                      </Table>
+                      <PaginationControls meta={transit.data.meta} rowCount={transit.data.data.length} noun="transit paths" onPage={setTransitOffset} />
+                    </>
+                  )}
+                </div>
               )}
             </>
           ) : (
             <>
-              {hops.isLoading && <LoadingState />}
+              {hops.isLoading && <LoadingState label="Loading hop edges…" />}
               {hops.error && <ErrorState message={(hops.error as Error).message} />}
-              {hops.data && hops.data.data.length === 0 && (
-                <EmptyState label="No matching hop edges" hint="Try lowering the RTT threshold or clearing the field filter." />
-              )}
-              {hops.data && hops.data.data.length > 0 && (
-                <>
-                <Table>
-                  <THead>
-                    <tr>
-                      <Th>From</Th>
-                      <Th>To</Th>
-                      <Th>From AS</Th>
-                      <Th>To AS</Th>
-                      <Th className="text-right">RTT</Th>
-                      <Th className="text-right">Observations</Th>
-                    </tr>
-                  </THead>
-                  <TBody>
-                    {hops.data.data.map((h) => (
-                      <Tr key={`${h.from_addr}-${h.to_addr}`}>
-                        <Td>
-                          <Link to={`/ip/${h.from_addr}`} className="font-mono text-xs text-brand-300 hover:text-brand-500">
-                            {h.from_addr}
-                          </Link>
-                        </Td>
-                        <Td>
-                          <Link to={`/ip/${h.to_addr}`} className="font-mono text-xs text-brand-300 hover:text-brand-500">
-                            {h.to_addr}
-                          </Link>
-                        </Td>
-                        <Td className="text-xs text-text-tertiary">{h.from_org || "—"}</Td>
-                        <Td className="text-xs text-text-tertiary">{h.to_org || "—"}</Td>
-                        <Td className="text-right font-mono text-xs text-warning-500">{fmtRtt(h.last_rtt_ms)}</Td>
-                        <Td className="text-right font-mono text-xs text-text-quaternary">{h.seen_count}</Td>
-                      </Tr>
-                    ))}
-                  </TBody>
-                </Table>
-                <PaginationControls meta={hops.data.meta} rowCount={hops.data.data.length} noun="hop edges" onPage={setHopOffset} />
-                </>
+              {hops.data && (
+                <div className="relative">
+                  <FetchingOverlay active={hops.isFetching && hops.isPlaceholderData} label="Loading page…" />
+                  {hops.data.data.length === 0 ? (
+                    <EmptyState label="No matching hop edges" hint="Try lowering the RTT threshold or clearing the field filter." />
+                  ) : (
+                    <>
+                      <Table>
+                        <THead>
+                          <tr>
+                            <Th>From</Th>
+                            <Th>To</Th>
+                            <Th>From AS</Th>
+                            <Th>To AS</Th>
+                            <Th className="text-right">RTT</Th>
+                            <Th className="text-right">Observations</Th>
+                          </tr>
+                        </THead>
+                        <TBody>
+                          {hops.data.data.map((h) => (
+                            <Tr key={`${h.from_addr}-${h.to_addr}`}>
+                              <Td>
+                                <Link to={`/ip/${h.from_addr}`} className="font-mono text-xs text-brand-300 hover:text-brand-500">
+                                  {h.from_addr}
+                                </Link>
+                              </Td>
+                              <Td>
+                                <Link to={`/ip/${h.to_addr}`} className="font-mono text-xs text-brand-300 hover:text-brand-500">
+                                  {h.to_addr}
+                                </Link>
+                              </Td>
+                              <Td className="text-xs text-text-tertiary">{h.from_org || "—"}</Td>
+                              <Td className="text-xs text-text-tertiary">{h.to_org || "—"}</Td>
+                              <Td className="text-right font-mono text-xs text-warning-500">{fmtRtt(h.last_rtt_ms)}</Td>
+                              <Td className="text-right font-mono text-xs text-text-quaternary">{h.seen_count}</Td>
+                            </Tr>
+                          ))}
+                        </TBody>
+                      </Table>
+                      <PaginationControls meta={hops.data.meta} rowCount={hops.data.data.length} noun="hop edges" onPage={setHopOffset} />
+                    </>
+                  )}
+                </div>
               )}
             </>
           )}

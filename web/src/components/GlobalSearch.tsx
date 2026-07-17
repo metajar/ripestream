@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { api, type SearchResult } from "@/api/client";
+import { Spinner } from "@/components/ui/states";
 import { cn } from "@/lib/utils";
 
 // GlobalSearch is a debounced search input for the top bar. It queries
@@ -120,7 +121,11 @@ export function GlobalSearch() {
           role="listbox"
           className="absolute z-50 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-border-secondary bg-bg-elevated shadow-xl"
         >
-          {loading && <li className="px-3 py-2 text-xs text-text-quaternary">Searching…</li>}
+          {loading && (
+            <li className="flex items-center gap-2 px-3 py-2 text-xs text-text-quaternary">
+              <Spinner size={14} /> Searching…
+            </li>
+          )}
           {error && (
             <li className="px-3 py-2 text-xs text-error-500">Search failed. Try again.</li>
           )}

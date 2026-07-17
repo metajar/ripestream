@@ -1,4 +1,5 @@
 import { Suspense, lazy } from "react";
+import { LoadingState } from "@/components/ui/states";
 
 // react-force-graph-2d depends on canvas/DOM globals only present in the browser,
 // so we lazy-load it to keep the initial bundle light and avoid import-time issues.
@@ -11,7 +12,7 @@ const ForceGraph2D = lazy(async () => {
 // so callers can use <Dynamic {...props} /> without their own Suspense.
 export default function Dynamic(props: Record<string, unknown>) {
   return (
-    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-text-quaternary">Loading graph…</div>}>
+    <Suspense fallback={<LoadingState label="Loading graph…" className="h-full py-0" />}>
       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
       <ForceGraph2D {...(props as any)} />
     </Suspense>

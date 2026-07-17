@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Globe2 } from "lucide-react";
 import { api, type ReachableGroup, type SearchResult } from "@/api/client";
+import { Spinner } from "@/components/ui/states";
 import { cn } from "@/lib/utils";
 
 interface SearchSelectProps {
@@ -178,7 +179,9 @@ export function SearchSelect({ label, placeholder, value, onChange, reachableFro
         <div className="relative z-10 mt-1">
           <div className="max-h-80 overflow-y-auto rounded-lg border border-border-secondary bg-bg-elevated shadow-xl">
             {loading && (
-              <div className="px-3 py-2 text-xs text-text-quaternary">Finding reachable destinations…</div>
+              <div className="flex items-center gap-2 px-3 py-2 text-xs text-text-quaternary">
+                <Spinner size={14} /> Finding reachable destinations…
+              </div>
             )}
 
             {constrained && !loading && filteredGroups.length === 0 && (

@@ -18,7 +18,7 @@ edges:
     condition: when working with alerting engine, rule CRUD, or alert state management
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-07-16
+last_updated: 2026-07-17
 ---
 
 # Session Bootstrap
@@ -52,6 +52,7 @@ Then read this file fully before doing anything else in this session.
 - Click-through IP detail pages showing ASN identity and observed incoming/outgoing traceroute hops
 - Route Correlation page detecting shared-hop RTT regressions across independent traceroutes against a 24-hour baseline, with live ASN and topology context
 - Server-paginated, server-filtered AS, probe, transit, and hop worklists with stable ordering; the Probes worklist does not poll while open
+- Networking-themed RJ45/Cat5e loading spinner shared via `LoadingState` / `FetchingOverlay`; paginated worklists overlay it on query-key changes without blanking prior rows
 
 **Not yet built:**
 - Email or external notification delivery (alerts are in-UI only)

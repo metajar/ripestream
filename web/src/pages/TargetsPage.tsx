@@ -26,7 +26,7 @@ export function TargetsPage() {
       </div>
       <Card>
         <CardContent className="pt-4">
-          {isLoading && <LoadingState />}
+          {isLoading && <LoadingState label="Loading targets…" />}
           {error && <ErrorState message={(error as Error).message} />}
           {data && data.length === 0 && (
             <EmptyState

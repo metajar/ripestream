@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { PaginationControls } from "@/components/PaginationControls";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
+import { EmptyState, ErrorState, FetchingOverlay, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { probeName, probeSubtitle } from "@/lib/probes";
 import { fmtEpoch, fmtPct, fmtRtt, lossColor } from "@/lib/utils";
@@ -19,7 +19,7 @@ export function ProbesPage() {
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   const filters = { type, status, country: country.trim().toUpperCase(), query: query.trim() };
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData, error } = useQuery({
     queryKey: ["probes", offset, filters],
     queryFn: () => api.probes(25, offset, filters),
     // Probe rows move frequently as measurements arrive. Refreshing while a
@@ -27,6 +27,7 @@ export function ProbesPage() {
     refetchInterval: false,
     refetchOnWindowFocus: false,
   });
+  const pageBusy = isFetching && isPlaceholderData;
 
   function resetPage(action: () => void) {
     action();
@@ -69,34 +70,40 @@ export function ProbesPage() {
               className="mt-1 block w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs text-text-primary outline-none focus:border-brand-500"
             />
           </label>
-          {isLoading && <LoadingState />}
+          {isLoading && <LoadingState label="Loading probes…" />}
           {error && <ErrorState message={(error as Error).message} />}
-          {data && data.data.length === 0 && <EmptyState label="No matching probes with notable loss" hint="Try broadening the metadata filters or wait for current measurements." />}
-          {data && data.data.length > 0 && (
-            <>
-            <Table>
-              <THead><tr><Th>Probe</Th><Th>Type / location</Th><Th>Status</Th><Th>Source AS</Th><Th className="text-right">Loss</Th><Th className="text-right">RTT</Th><Th className="text-right">Observed</Th></tr></THead>
-              <TBody>
-                {data.data.map((p) => (
-                  <Tr key={`${p.id}-${p.src_ip}`}>
-                    <Td>
-                      <Link to={`/probe/${p.id}`} className="text-xs text-brand-300 hover:text-brand-500">
-                        <span className="block font-medium">{probeName(p.id, p.metadata)}</span>
-                        <span className="font-mono text-[11px] text-text-quaternary">{probeSubtitle(p.id, undefined)}</span>
-                      </Link>
-                    </Td>
-                    <Td className="text-xs text-text-tertiary">{p.metadata ? [p.metadata.probe_type, p.metadata.country_code].filter(Boolean).join(" · ") : "Metadata pending"}</Td>
-                    <Td>{p.metadata?.status_name ? <Badge variant={p.metadata.status_name === "Connected" ? "success" : "neutral"}>{p.metadata.status_name}</Badge> : <span className="text-xs text-text-quaternary">—</span>}</Td>
-                    <Td>{p.src_asn ? <Link to={`/asn/${p.src_asn}`} className="text-xs text-text-secondary hover:text-brand-300">{p.src_org || `AS${p.src_asn}`}</Link> : <span className="text-xs text-text-quaternary">—</span>}</Td>
-                    <Td className={`text-right font-mono text-xs font-medium ${lossColor(p.loss_pct)}`}>{fmtPct(p.loss_pct)}</Td>
-                    <Td className="text-right font-mono text-xs text-text-tertiary">{fmtRtt(p.avg_rtt_ms)}</Td>
-                    <Td className="text-right font-mono text-xs text-text-tertiary">{fmtEpoch(p.last_seen)}</Td>
-                  </Tr>
-                ))}
-              </TBody>
-            </Table>
-            <PaginationControls meta={data.meta} rowCount={data.data.length} noun="probes" onPage={setOffset} />
-            </>
+          {data && (
+            <div className="relative">
+              <FetchingOverlay active={pageBusy} label="Loading page…" />
+              {data.data.length === 0 ? (
+                <EmptyState label="No matching probes with notable loss" hint="Try broadening the metadata filters or wait for current measurements." />
+              ) : (
+                <>
+                  <Table>
+                    <THead><tr><Th>Probe</Th><Th>Type / location</Th><Th>Status</Th><Th>Source AS</Th><Th className="text-right">Loss</Th><Th className="text-right">RTT</Th><Th className="text-right">Observed</Th></tr></THead>
+                    <TBody>
+                      {data.data.map((p) => (
+                        <Tr key={`${p.id}-${p.src_ip}`}>
+                          <Td>
+                            <Link to={`/probe/${p.id}`} className="text-xs text-brand-300 hover:text-brand-500">
+                              <span className="block font-medium">{probeName(p.id, p.metadata)}</span>
+                              <span className="font-mono text-[11px] text-text-quaternary">{probeSubtitle(p.id, undefined)}</span>
+                            </Link>
+                          </Td>
+                          <Td className="text-xs text-text-tertiary">{p.metadata ? [p.metadata.probe_type, p.metadata.country_code].filter(Boolean).join(" · ") : "Metadata pending"}</Td>
+                          <Td>{p.metadata?.status_name ? <Badge variant={p.metadata.status_name === "Connected" ? "success" : "neutral"}>{p.metadata.status_name}</Badge> : <span className="text-xs text-text-quaternary">—</span>}</Td>
+                          <Td>{p.src_asn ? <Link to={`/asn/${p.src_asn}`} className="text-xs text-text-secondary hover:text-brand-300">{p.src_org || `AS${p.src_asn}`}</Link> : <span className="text-xs text-text-quaternary">—</span>}</Td>
+                          <Td className={`text-right font-mono text-xs font-medium ${lossColor(p.loss_pct)}`}>{fmtPct(p.loss_pct)}</Td>
+                          <Td className="text-right font-mono text-xs text-text-tertiary">{fmtRtt(p.avg_rtt_ms)}</Td>
+                          <Td className="text-right font-mono text-xs text-text-tertiary">{fmtEpoch(p.last_seen)}</Td>
+                        </Tr>
+                      ))}
+                    </TBody>
+                  </Table>
+                  <PaginationControls meta={data.meta} rowCount={data.data.length} noun="probes" onPage={setOffset} />
+                </>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>

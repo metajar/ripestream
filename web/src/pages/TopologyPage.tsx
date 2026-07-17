@@ -4,6 +4,7 @@ import Dynamic from "./_ForceGraphLazy";
 import { api, type GraphEdge, type GraphNode } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FetchingOverlay, LoadingState, Spinner } from "@/components/ui/states";
 import { fmtNum } from "@/lib/utils";
 
 // Visual encoding for node kinds (color + shape label)
@@ -162,7 +163,9 @@ export function TopologyPage() {
                 className="w-full rounded-lg border border-border-primary bg-bg-tertiary px-2 py-2 text-sm text-text-primary focus:border-brand-500 focus:outline-none"
               />
             </div>
-            <Button type="submit" disabled={loading || !seed}>Load</Button>
+            <Button type="submit" disabled={loading || !seed}>
+              {loading ? <><Spinner size={14} /> Loading</> : "Load"}
+            </Button>
           </form>
         </CardContent>
       </Card>
@@ -184,8 +187,9 @@ export function TopologyPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {/* Bounded limits shown before/during load */}
-          {loading && <p className="mb-2 text-xs text-text-quaternary">Loading (depth {depth}, max {limit} nodes)…</p>}
+          {loading && nodes.length === 0 && (
+            <LoadingState label={`Loading subgraph (depth ${depth}, max ${limit} nodes)…`} className="py-6" />
+          )}
 
           {/* Text/list alternative for accessibility */}
           {showList && nodes.length > 0 ? (
@@ -217,7 +221,10 @@ export function TopologyPage() {
               </div>
             </div>
           ) : (
-            <div ref={containerRef} className="h-[480px] w-full overflow-hidden rounded-lg bg-bg-primary">
+            <div ref={containerRef} className="relative h-[480px] w-full overflow-hidden rounded-lg bg-bg-primary">
+              {loading && nodes.length > 0 && (
+                <FetchingOverlay active label="Refreshing topology…" />
+              )}
               {nodes.length > 0 ? (
                 <Dynamic
                   graphData={graphData}
@@ -231,11 +238,11 @@ export function TopologyPage() {
                   backgroundColor="transparent"
                   ref={fgRef as never}
                 />
-              ) : (
+              ) : !loading ? (
                 <div className="flex h-full items-center justify-center text-sm text-text-quaternary">
-                  {loading ? "Loading…" : "Load a seed to render the topology"}
+                  Load a seed to render the topology
                 </div>
-              )}
+              ) : null}
             </div>
           )}
 
