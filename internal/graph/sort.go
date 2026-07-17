@@ -47,6 +47,23 @@ func probeSortExpr(sort string) (expr string, ok bool) {
 	}
 }
 
+func detailProbeSortExpr(sort string) (expr string, ok bool) {
+	switch sort {
+	case "loss":
+		return "loss", true
+	case "rtt":
+		return "rtt", true
+	case "last_seen":
+		return "last_seen", true
+	default:
+		return "", false
+	}
+}
+
+func detailTargetSortExpr(sort string) (expr string, ok bool) {
+	return detailProbeSortExpr(sort)
+}
+
 // targetSortExpr maps sort keys for the target list.
 func targetSortExpr(sort string) (expr string, ok bool) {
 	switch sort {

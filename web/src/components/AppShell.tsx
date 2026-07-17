@@ -8,6 +8,7 @@ import {
   Target,
   Waypoints,
   Zap,
+  EthernetPort
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { GlobalSearch } from "@/components/GlobalSearch";
@@ -53,7 +54,7 @@ export function AppShell() {
       <aside className="flex w-60 shrink-0 flex-col border-r border-border-primary bg-bg-secondary">
         <div className="flex items-center gap-2 px-5 py-4">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500/15">
-            <Activity className="h-5 w-5 text-brand-300" />
+            <EthernetPort className="h-5 w-5 text-brand-300" />
           </div>
           <div className="leading-tight">
             <div className="text-sm font-semibold text-text-primary">RipeStream</div>

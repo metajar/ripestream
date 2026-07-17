@@ -13,6 +13,7 @@ last_updated: 2026-07-17
 - Ask the graph query for `limit + 1`, return only `limit` rows, and set `meta.has_more` from the sentinel row. Do not run an expensive count merely to claim an exact total.
 - Apply search and field filters in FalkorDB before `SKIP` and `LIMIT`; never fetch an unbounded set for client-side filtering.
 - End every ordering with stable entity keys so unchanged data does not duplicate or skip rows at page boundaries.
+- For nested relationship lists, keep the entity summary/count separate from the page endpoint. Ensure reciprocal pages use the same retention/freshness semantics so an edge visible from one entity is discoverable from the other.
 
 ## Frontend
 

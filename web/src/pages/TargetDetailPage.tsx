@@ -13,9 +13,10 @@ import {
 import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ErrorState, LoadingState } from "@/components/ui/states";
+import { PaginationControls } from "@/components/PaginationControls";
+import { EmptyState, ErrorState, FetchingOverlay, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
-import { fmtPct, fmtRtt, lossColor } from "@/lib/utils";
+import { fmtEpoch, fmtPct, fmtRtt, lossColor } from "@/lib/utils";
 import { probeName, probeSubtitle } from "@/lib/probes";
 
 const CHART_COLORS = ["var(--color-chart-4)", "var(--color-chart-3)", "var(--color-chart-5)"];
@@ -24,6 +25,8 @@ export function TargetDetailPage() {
   const { addr } = useParams<{ addr: string }>();
   const decoded = decodeURIComponent(addr ?? "");
   const [metric, setMetric] = useState<"loss_pct" | "avg_rtt_ms">("loss_pct");
+  const [probeOffset, setProbeOffset] = useState(0);
+  const [probeQuery, setProbeQuery] = useState("");
 
   const detail = useQuery({
     queryKey: ["target", decoded],
@@ -35,6 +38,14 @@ export function TargetDetailPage() {
     queryFn: () => api.timeseries({ target: decoded, metric, buckets: 60 }),
     enabled: !!decoded,
   });
+  const probes = useQuery({
+    queryKey: ["target-probes", decoded, probeOffset, probeQuery],
+    queryFn: () => api.targetProbes(decoded, 25, probeOffset, probeQuery.trim()),
+    enabled: !!decoded,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+  });
+  const probesBusy = probes.isFetching && probes.isPlaceholderData;
 
   if (detail.isLoading) return <LoadingState label={`Loading ${decoded}…`} />;
   if (detail.error) return <ErrorState message={(detail.error as Error).message} />;
@@ -62,13 +73,13 @@ export function TargetDetailPage() {
           ) : (
             <>with no attributed AS </>
           )}
-          is observed by <strong className="text-text-primary">{d.probes.length} {d.probes.length === 1 ? "probe" : "probes"}</strong>.
-          {d.probes.length > 0 && (
+          is observed by <strong className="text-text-primary">{d.probe_count} {d.probe_count === 1 ? "probe" : "probes"}</strong>.
+          {d.probe_count > 0 && (
             <> {" "}Latest PING-edge values; historical trend shown below from ClickHouse.</>
           )}
         </p>
         <p className="mt-1 text-sm text-text-quaternary">
-          Scope: {d.probes.length} probes, {d.nearby_hops.length} adjacent hops.
+          Scope: {d.probe_count} probes, {d.nearby_hops.length} adjacent hops.
           {d.asn && <> In <Link to={`/asn/${d.asn}`} className="text-brand-300 hover:text-brand-500">AS{d.asn}</Link>.</>}
         </p>
       </div>
@@ -136,9 +147,24 @@ export function TargetDetailPage() {
         {/* Probes reaching this target */}
         <Card>
           <CardHeader>
-            <CardTitle>Probes ({d.probes.length})</CardTitle>
+            <CardTitle>Probes ({d.probe_count})</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="relative">
+            <label className="mb-3 block text-xs text-text-quaternary">
+              Filter probes
+              <input
+                value={probeQuery}
+                onChange={(event) => { setProbeQuery(event.target.value); setProbeOffset(0); }}
+                placeholder="Probe ID or name, IP, ASN, organization, loss, RTT…"
+                className="mt-1 block w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs text-text-primary outline-none focus:border-brand-500"
+              />
+            </label>
+            {probes.isLoading && <LoadingState label="Loading probes…" />}
+            {probes.error && <ErrorState message={(probes.error as Error).message} />}
+            {probes.data && probes.data.data.length === 0 && (
+              <EmptyState label="No matching probes" hint="Try clearing the probe filter." />
+            )}
+            {probes.data && probes.data.data.length > 0 && <>
             <Table>
               <THead>
                 <tr>
@@ -146,10 +172,11 @@ export function TargetDetailPage() {
                   <Th>Source AS</Th>
                   <Th className="text-right">Loss</Th>
                   <Th className="text-right">RTT</Th>
+                  <Th className="text-right">Last observed</Th>
                 </tr>
               </THead>
               <TBody>
-                {d.probes.map((p) => (
+                {probes.data.data.map((p) => (
                   <Tr key={p.id}>
                     <Td>
                       <Link to={`/probe/${p.id}`} className="text-xs text-brand-300 hover:text-brand-500">
@@ -170,10 +197,19 @@ export function TargetDetailPage() {
                       {fmtPct(p.loss_pct)}
                     </Td>
                     <Td className="text-right font-mono text-xs text-text-tertiary">{fmtRtt(p.avg_rtt_ms)}</Td>
+                    <Td className="text-right font-mono text-xs text-text-tertiary">{fmtEpoch(p.last_seen)}</Td>
                   </Tr>
                 ))}
               </TBody>
             </Table>
+            <PaginationControls
+              meta={probes.data.meta}
+              rowCount={probes.data.data.length}
+              noun="probes"
+              onPage={setProbeOffset}
+            />
+            </>}
+            <FetchingOverlay active={probesBusy} label="Loading probes…" />
           </CardContent>
         </Card>
 

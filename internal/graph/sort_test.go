@@ -55,3 +55,14 @@ func TestTransitAndHopSortsAreWhitelisted(t *testing.T) {
 		t.Fatalf("unsafe transit sort did not fall back: %q", got)
 	}
 }
+
+func TestDetailRelationshipSortsAreWhitelisted(t *testing.T) {
+	for _, pick := range []func(string) (string, bool){detailProbeSortExpr, detailTargetSortExpr} {
+		if got := validatedSort("rtt", "loss", pick); got != "rtt" {
+			t.Fatalf("detail RTT sort = %q", got)
+		}
+		if got := validatedSort("loss; DELETE", "loss", pick); got != "loss" {
+			t.Fatalf("unsafe detail sort did not fall back: %q", got)
+		}
+	}
+}

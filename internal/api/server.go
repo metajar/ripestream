@@ -122,9 +122,12 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/asn/{asn}/transit", s.asnTransit)
 	m.HandleFunc("GET /api/probes", s.probes)
 	m.HandleFunc("GET /api/probe/{id}", s.probeDetail)
+	m.HandleFunc("GET /api/probe/{id}/targets", s.probeTargets)
 	m.HandleFunc("GET /api/targets", s.targets)
 	m.HandleFunc("GET /api/target/{addr}", s.targetDetail)
+	m.HandleFunc("GET /api/target/{addr}/probes", s.targetProbes)
 	m.HandleFunc("GET /api/ip/{addr}", s.ipDetail)
+	m.HandleFunc("GET /api/ip/{addr}/hops", s.ipHops)
 
 	// Hops / Transit (UC3)
 	m.HandleFunc("GET /api/hops/commonality", s.hopCommonalities)

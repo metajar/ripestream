@@ -90,6 +90,23 @@ func (s *Server) probeDetail(w http.ResponseWriter, r *http.Request) {
 	respondOK(w, d)
 }
 
+func (s *Server) probeTargets(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(r, 25)
+	out, err := s.graph.ProbeTargets(r.Context(), id, graph.TargetFilter{
+		Limit: limit + 1, Offset: offset, Query: r.URL.Query().Get("q"),
+		Sort: r.URL.Query().Get("sort"), Order: r.URL.Query().Get("order"),
+	})
+	if err != nil {
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respondPage(w, out, limit, offset)
+}
+
 // ---- Targets (UC2) ----------------------------------------------------------
 
 func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +206,24 @@ func (s *Server) targetDetail(w http.ResponseWriter, r *http.Request) {
 	respondOK(w, d)
 }
 
+func (s *Server) targetProbes(w http.ResponseWriter, r *http.Request) {
+	addr := r.PathValue("addr")
+	if addr == "" {
+		respondError(w, http.StatusBadRequest, "missing addr")
+		return
+	}
+	limit, offset := pageParams(r, 25)
+	out, err := s.graph.TargetProbes(r.Context(), addr, graph.ProbeFilter{
+		Limit: limit + 1, Offset: offset, Query: r.URL.Query().Get("q"),
+		Sort: r.URL.Query().Get("sort"), Order: r.URL.Query().Get("order"),
+	})
+	if err != nil {
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respondPage(w, out, limit, offset)
+}
+
 // ---- IP detail (UC2/UC3) ----------------------------------------------------
 
 func (s *Server) ipDetail(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +238,29 @@ func (s *Server) ipDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondOK(w, d)
+}
+
+func (s *Server) ipHops(w http.ResponseWriter, r *http.Request) {
+	addr := r.PathValue("addr")
+	if addr == "" {
+		respondError(w, http.StatusBadRequest, "missing addr")
+		return
+	}
+	direction := r.URL.Query().Get("direction")
+	if direction != "in" && direction != "out" {
+		respondError(w, http.StatusBadRequest, "direction must be in or out")
+		return
+	}
+	limit, offset := pageParams(r, 25)
+	out, err := s.graph.IPHops(r.Context(), addr, direction, graph.HopFilter{
+		Limit: limit + 1, Offset: offset, Query: r.URL.Query().Get("q"),
+		Sort: r.URL.Query().Get("sort"), Order: r.URL.Query().Get("order"),
+	})
+	if err != nil {
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respondPage(w, out, limit, offset)
 }
 
 // ---- path-param helpers -----------------------------------------------------

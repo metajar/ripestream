@@ -33,8 +33,10 @@ type Reader interface {
 	ASNTargets(ctx context.Context, asn int64, limit int) ([]TargetInfo, error)
 	ASNTransit(ctx context.Context, asn int64, limit int) ([]ASNTransitEdge, error)
 	ProbeDetail(ctx context.Context, id int64) (ProbeDetail, error)
+	ProbeTargets(ctx context.Context, id int64, f TargetFilter) ([]TargetInfo, error)
 	Probes(ctx context.Context, f ProbeFilter) ([]ProbeInfo, error)
 	TargetDetail(ctx context.Context, addr string) (TargetDetail, error)
+	TargetProbes(ctx context.Context, addr string, f ProbeFilter) ([]ProbeInfo, error)
 	Targets(ctx context.Context, f TargetFilter) ([]TargetInfo, error)
 	HotHops(ctx context.Context, f HopFilter) ([]HotHop, error)
 	HopContexts(ctx context.Context, addrs []string) (map[string]HopContext, error)
@@ -42,6 +44,7 @@ type Reader interface {
 	TransitPairDetail(ctx context.Context, asnA, asnB int64) (TransitPairDetail, error)
 	TransitPairTests(ctx context.Context, asnA, asnB int64, limit int) ([]TransitTest, error)
 	IPDetail(ctx context.Context, addr string) (IPDetail, error)
+	IPHops(ctx context.Context, addr, direction string, f HopFilter) ([]HotHop, error)
 	Path(ctx context.Context, src, dst string, maxHops int) (Path, error)
 	ReachableDestinations(ctx context.Context, src string) ([]ReachableGroup, error)
 	Subgraph(ctx context.Context, f SubgraphFilter) (Subgraph, error)
@@ -363,22 +366,22 @@ type HopContext struct {
 }
 
 type ProbeDetail struct {
-	ID       int64          `json:"id"`
-	SrcIP    string         `json:"src_ip"`
-	SrcASN   *int64         `json:"src_asn,omitempty"`
-	SrcOrg   string         `json:"src_org,omitempty"`
-	Metadata *ProbeMetadata `json:"metadata,omitempty"`
-	Targets  []TargetInfo   `json:"targets"`
-	LastSeen int64          `json:"last_seen"`
+	ID          int64          `json:"id"`
+	SrcIP       string         `json:"src_ip"`
+	SrcASN      *int64         `json:"src_asn,omitempty"`
+	SrcOrg      string         `json:"src_org,omitempty"`
+	Metadata    *ProbeMetadata `json:"metadata,omitempty"`
+	TargetCount int64          `json:"target_count"`
+	LastSeen    int64          `json:"last_seen"`
 }
 
 type TargetDetail struct {
-	Addr       string      `json:"addr"`
-	ASN        *int64      `json:"asn,omitempty"`
-	Org        string      `json:"org,omitempty"`
-	Probes     []ProbeInfo `json:"probes"`
-	NearbyHops []HotHop    `json:"nearby_hops"`
-	LastSeen   int64       `json:"last_seen"`
+	Addr       string   `json:"addr"`
+	ASN        *int64   `json:"asn,omitempty"`
+	Org        string   `json:"org,omitempty"`
+	ProbeCount int64    `json:"probe_count"`
+	NearbyHops []HotHop `json:"nearby_hops"`
+	LastSeen   int64    `json:"last_seen"`
 }
 
 // HotHop is a NEXT_HOP edge flagged as a potential transit hotspot.
@@ -425,13 +428,13 @@ type TransitTest struct {
 
 // IPDetail describes a single :IP node and its incident NEXT_HOP edges.
 type IPDetail struct {
-	Addr     string   `json:"addr"`
-	ASN      *int64   `json:"asn,omitempty"`
-	Org      string   `json:"org,omitempty"`
-	AF       int64    `json:"af"`
-	LastSeen int64    `json:"last_seen"`
-	InHops   []HotHop `json:"in_hops"`
-	OutHops  []HotHop `json:"out_hops"`
+	Addr         string `json:"addr"`
+	ASN          *int64 `json:"asn,omitempty"`
+	Org          string `json:"org,omitempty"`
+	AF           int64  `json:"af"`
+	LastSeen     int64  `json:"last_seen"`
+	IncomingHops int64  `json:"incoming_hops"`
+	OutgoingHops int64  `json:"outgoing_hops"`
 }
 
 // Path is a traceroute-style node/edge sequence between two IPs.
@@ -535,6 +538,8 @@ type ProbeFilter struct {
 type TargetFilter struct {
 	ASN       int64 // destination ASN, 0 = any
 	Limit     int
+	Offset    int
+	Query     string // case-insensitive match across every returned field
 	MinProbes int64
 	Sort      string // loss | rtt | probes | last_seen
 	Order     string

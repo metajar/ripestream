@@ -97,11 +97,39 @@ func TestLiveUpsert(t *testing.T) {
 	if _, err := s.Probes(ctx, ProbeFilter{Limit: 5, Offset: 1, Query: "as15169"}); err != nil {
 		t.Fatalf("filtered probes: %v", err)
 	}
+	probeDetail, err := s.ProbeDetail(ctx, 42)
+	if err != nil || probeDetail.TargetCount < 1 {
+		t.Fatalf("probe detail target count = %d, err = %v", probeDetail.TargetCount, err)
+	}
+	probeTargets, err := s.ProbeTargets(ctx, 42, TargetFilter{Limit: 5, Query: "1.1.1.1"})
+	if err != nil || len(probeTargets) != 1 || probeTargets[0].Addr != "1.1.1.1" {
+		t.Fatalf("filtered probe targets = %#v, err = %v", probeTargets, err)
+	}
+	targetDetail, err := s.TargetDetail(ctx, "1.1.1.1")
+	if err != nil || targetDetail.ProbeCount < 1 {
+		t.Fatalf("target detail probe count = %d, err = %v", targetDetail.ProbeCount, err)
+	}
+	targetProbes, err := s.TargetProbes(ctx, "1.1.1.1", ProbeFilter{Limit: 5, Query: "8.8.8.8"})
+	if err != nil || len(targetProbes) != 1 || targetProbes[0].ID != 42 {
+		t.Fatalf("filtered target probes = %#v, err = %v", targetProbes, err)
+	}
 	if _, err := s.HotHops(ctx, HopFilter{Limit: 5, Offset: 1, Query: "as15169", Sort: "observations"}); err != nil {
 		t.Fatalf("filtered hot hops: %v", err)
 	}
 	if _, err := s.TransitEdges(ctx, TransitFilter{Limit: 5, Offset: 1, Query: "as15169", Sort: "last_seen"}); err != nil {
 		t.Fatalf("filtered transit edges: %v", err)
+	}
+	ipDetail, err := s.IPDetail(ctx, "1.0.0.1")
+	if err != nil || ipDetail.IncomingHops < 1 || ipDetail.OutgoingHops < 1 {
+		t.Fatalf("IP detail hop counts = in:%d out:%d, err = %v", ipDetail.IncomingHops, ipDetail.OutgoingHops, err)
+	}
+	inHops, err := s.IPHops(ctx, "1.0.0.1", "in", HopFilter{Limit: 5, Query: "8.8.8.8"})
+	if err != nil || len(inHops) != 1 || inHops[0].FromAddr != "8.8.8.8" {
+		t.Fatalf("filtered incoming hops = %#v, err = %v", inHops, err)
+	}
+	outHops, err := s.IPHops(ctx, "1.0.0.1", "out", HopFilter{Limit: 5, Query: "1.1.1.1"})
+	if err != nil || len(outHops) != 1 || outHops[0].ToAddr != "1.1.1.1" {
+		t.Fatalf("filtered outgoing hops = %#v, err = %v", outHops, err)
 	}
 	if _, err := s.Overview(ctx); err != nil {
 		t.Fatalf("overview: %v", err)

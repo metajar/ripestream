@@ -480,28 +480,51 @@ RETURN src.addr AS src_ip, as.asn AS asn, as.org AS org, src.last_seen AS last_s
 	d.SrcOrg = asString(r["org"])
 	d.Metadata = probeMetadataFromRow(r)
 	d.LastSeen = asInt(r["last_seen"])
+	counts, err := s.rows(ctx, `MATCH (:Probe {id: $id})-[e:PING]->() WHERE e.sent > 0 RETURN count(e) AS count`, map[string]any{"id": id})
+	if err != nil {
+		return d, err
+	}
+	if len(counts) > 0 {
+		d.TargetCount = asInt(counts[0]["count"])
+	}
+	return d, nil
+}
 
+func (s *Store) ProbeTargets(ctx context.Context, id int64, f TargetFilter) ([]TargetInfo, error) {
+	f.Limit = clampLimit(f.Limit, 25, 501)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	sortExpr := validatedSort(f.Sort, "loss", detailTargetSortExpr)
+	dir := sortDir(f.Order)
 	tgts, err := s.rows(ctx, `
 MATCH (p:Probe {id: $id})-[e:PING]->(t:IP)
 WHERE e.sent > 0
 OPTIONAL MATCH (t)-[:IN_AS]->(as:AS)
 WITH t, as, e, e.loss_ratio AS loss, e.avg_rtt_ms AS rtt, e.last_seen AS ls
+WHERE $query = '' OR toLower(t.addr) CONTAINS $query
+   OR toString(coalesce(as.asn, 0)) CONTAINS $query OR ('as' + toString(coalesce(as.asn, 0))) CONTAINS $query
+   OR toLower(coalesce(as.org, '')) CONTAINS $query OR toString(round(100.0*loss)) CONTAINS $query
+   OR toString(round(rtt)) CONTAINS $query OR toString(ls) CONTAINS $query
 RETURN t.addr AS addr, as.asn AS asn, as.org AS org,
-       round(100.0*loss) AS loss_pct, round(rtt) AS rtt, ls
-ORDER BY loss DESC LIMIT 50`, map[string]any{"id": id})
+       round(100.0*loss) AS loss_pct, round(rtt) AS rtt, ls AS last_seen, loss
+ORDER BY `+sortExpr+` `+dir+`, last_seen DESC, addr ASC SKIP $offset LIMIT $limit`, map[string]any{
+		"id": id, "limit": f.Limit, "offset": f.Offset,
+		"query": strings.ToLower(strings.TrimSpace(f.Query)),
+	})
 	if err != nil {
-		return d, err
+		return nil, err
 	}
-	d.Targets = make([]TargetInfo, 0, len(tgts))
+	out := make([]TargetInfo, 0, len(tgts))
 	for _, r := range tgts {
-		d.Targets = append(d.Targets, TargetInfo{
+		out = append(out, TargetInfo{
 			Addr: asString(r["addr"]), ASN: ptrIf(asInt(r["asn"]), int64(0)),
 			Org: asString(r["org"]), Probes: 1,
 			LossPct: asFloat(r["loss_pct"]), AvgRttMs: asFloat(r["rtt"]),
-			LastSeen: asInt(r["ls"]),
+			LastSeen: asInt(r["last_seen"]),
 		})
 	}
-	return d, nil
+	return out, nil
 }
 
 // ---- Target -----------------------------------------------------------------
@@ -580,20 +603,12 @@ RETURN t.last_seen AS last_seen, as.asn AS asn, as.org AS org`,
 	d.ASN = ptrIf(asInt(r["asn"]), int64(0))
 	d.Org = asString(r["org"])
 	d.LastSeen = asInt(r["last_seen"])
-
-	probes, err := s.rows(ctx, `
-MATCH (p:Probe)-[e:PING]->(t:IP {addr: $addr})
-WHERE e.sent > 0 AND e.last_seen >= $cutoff
-RETURN p.id AS id, p.source_ip AS src_ip, p.source_asn AS asn, p.source_org AS org,
-       round(100.0*e.loss_ratio) AS loss_pct, round(e.avg_rtt_ms) AS rtt,
-       e.last_seen AS last_seen, `+probeMetadataProjection+`
-ORDER BY e.loss_ratio DESC, e.last_seen DESC LIMIT 100`, map[string]any{"addr": addr, "cutoff": s.activeCutoff()})
+	counts, err := s.rows(ctx, `MATCH ()-[e:PING]->(:IP {addr: $addr}) WHERE e.sent > 0 RETURN count(e) AS count`, map[string]any{"addr": addr})
 	if err != nil {
 		return d, err
 	}
-	d.Probes = make([]ProbeInfo, 0, len(probes))
-	for _, r := range probes {
-		d.Probes = append(d.Probes, probeInfoFromRow(r))
+	if len(counts) > 0 {
+		d.ProbeCount = asInt(counts[0]["count"])
 	}
 
 	// nearby hops: edges incident to this target's IP.
@@ -602,6 +617,43 @@ ORDER BY e.loss_ratio DESC, e.last_seen DESC LIMIT 100`, map[string]any{"addr": 
 		d.NearbyHops = hops
 	}
 	return d, nil
+}
+
+func (s *Store) TargetProbes(ctx context.Context, addr string, f ProbeFilter) ([]ProbeInfo, error) {
+	f.Limit = clampLimit(f.Limit, 25, 501)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	sortExpr := validatedSort(f.Sort, "loss", detailProbeSortExpr)
+	dir := sortDir(f.Order)
+	probes, err := s.rows(ctx, `
+MATCH (p:Probe)-[e:PING]->(t:IP {addr: $addr})
+WHERE e.sent > 0
+WITH p, e, e.loss_ratio AS loss, e.avg_rtt_ms AS rtt, e.last_seen AS last_seen
+WHERE $query = '' OR toString(p.id) CONTAINS $query
+   OR toLower(coalesce(p.display_name, '')) CONTAINS $query
+   OR toLower(coalesce(p.probe_type, '')) CONTAINS $query
+   OR toLower(coalesce(p.country_code, '')) CONTAINS $query
+   OR toLower(coalesce(p.source_ip, '')) CONTAINS $query
+   OR toString(coalesce(p.source_asn, 0)) CONTAINS $query OR ('as' + toString(coalesce(p.source_asn, 0))) CONTAINS $query
+   OR toLower(coalesce(p.source_org, '')) CONTAINS $query
+   OR toString(round(100.0*loss)) CONTAINS $query OR toString(round(rtt)) CONTAINS $query
+   OR toString(last_seen) CONTAINS $query
+RETURN p.id AS id, p.source_ip AS src_ip, p.source_asn AS asn, p.source_org AS org,
+       round(100.0*loss) AS loss_pct, round(rtt) AS rtt,
+       last_seen, loss, `+probeMetadataProjection+`
+ORDER BY `+sortExpr+` `+dir+`, last_seen DESC, id ASC SKIP $offset LIMIT $limit`, map[string]any{
+		"addr": addr, "limit": f.Limit, "offset": f.Offset,
+		"query": strings.ToLower(strings.TrimSpace(f.Query)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProbeInfo, 0, len(probes))
+	for _, r := range probes {
+		out = append(out, probeInfoFromRow(r))
+	}
+	return out, nil
 }
 
 // ---- Hops / Transit ---------------------------------------------------------
@@ -801,29 +853,68 @@ RETURN ip.af AS af, ip.last_seen AS ls, as.asn AS asn, as.org AS org`,
 	d.AF = asInt(r["af"])
 	d.LastSeen = asInt(r["ls"])
 
-	inRows, err := s.rows(ctx, `
+	inCounts, err := s.rows(ctx, `MATCH ()-[e:NEXT_HOP]->(:IP {addr: $addr}) RETURN count(e) AS count`, map[string]any{"addr": addr})
+	if err != nil {
+		return d, err
+	}
+	if len(inCounts) > 0 {
+		d.IncomingHops = asInt(inCounts[0]["count"])
+	}
+	outCounts, err := s.rows(ctx, `MATCH (:IP {addr: $addr})-[e:NEXT_HOP]->() RETURN count(e) AS count`, map[string]any{"addr": addr})
+	if err != nil {
+		return d, err
+	}
+	if len(outCounts) > 0 {
+		d.OutgoingHops = asInt(outCounts[0]["count"])
+	}
+	return d, nil
+}
+
+func (s *Store) IPHops(ctx context.Context, addr, direction string, f HopFilter) ([]HotHop, error) {
+	f.Limit = clampLimit(f.Limit, 25, 501)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	sortExpr := validatedSort(f.Sort, "rtt", hopSortExpr)
+	dir := sortDir(f.Order)
+	params := map[string]any{
+		"addr": addr, "limit": f.Limit, "offset": f.Offset,
+		"query": strings.ToLower(strings.TrimSpace(f.Query)),
+	}
+	var q string
+	switch direction {
+	case "in":
+		q = `
 MATCH (a:IP)-[e:NEXT_HOP]->(b:IP {addr: $addr})
 OPTIONAL MATCH (a)-[:IN_AS]->(aas:AS)
-WITH a.addr AS fa, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
+WITH a.addr AS fa, b.addr AS ta, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
      aas.asn AS faasn, aas.org AS faorg
-RETURN fa, rtt, sc, ls, faasn, faorg
-ORDER BY rtt DESC LIMIT 50`, map[string]any{"addr": addr})
-	if err != nil {
-		return d, err
-	}
-	d.InHops = scanHotHops(inRows)
-	outRows, err := s.rows(ctx, `
+WHERE $query = '' OR toLower(fa) CONTAINS $query
+   OR toString(coalesce(faasn, 0)) CONTAINS $query OR ('as' + toString(coalesce(faasn, 0))) CONTAINS $query
+   OR toLower(coalesce(faorg, '')) CONTAINS $query OR toString(round(rtt)) CONTAINS $query
+   OR toString(sc) CONTAINS $query OR toString(ls) CONTAINS $query
+RETURN fa, ta, rtt, sc, ls, faasn, faorg
+ORDER BY ` + sortExpr + ` ` + dir + `, fa ASC SKIP $offset LIMIT $limit`
+	case "out":
+		q = `
 MATCH (a:IP {addr: $addr})-[e:NEXT_HOP]->(b:IP)
 OPTIONAL MATCH (b)-[:IN_AS]->(bas:AS)
-WITH b.addr AS ta, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
+WITH a.addr AS fa, b.addr AS ta, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
      bas.asn AS taasn, bas.org AS taorg
-RETURN ta, rtt, sc, ls, taasn, taorg
-ORDER BY rtt DESC LIMIT 50`, map[string]any{"addr": addr})
-	if err != nil {
-		return d, err
+WHERE $query = '' OR toLower(ta) CONTAINS $query
+   OR toString(coalesce(taasn, 0)) CONTAINS $query OR ('as' + toString(coalesce(taasn, 0))) CONTAINS $query
+   OR toLower(coalesce(taorg, '')) CONTAINS $query OR toString(round(rtt)) CONTAINS $query
+   OR toString(sc) CONTAINS $query OR toString(ls) CONTAINS $query
+RETURN fa, ta, rtt, sc, ls, taasn, taorg
+ORDER BY ` + sortExpr + ` ` + dir + `, ta ASC SKIP $offset LIMIT $limit`
+	default:
+		return nil, fmt.Errorf("invalid hop direction %q", direction)
 	}
-	d.OutHops = scanHotHops(outRows)
-	return d, nil
+	rows, err := s.rows(ctx, q, params)
+	if err != nil {
+		return nil, err
+	}
+	return scanHotHops(rows), nil
 }
 
 // nearbyHops returns NEXT_HOP edges on either side of addr (the union of in/out).

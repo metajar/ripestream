@@ -212,7 +212,7 @@ export interface ProbeDetail {
   src_asn?: number;
   src_org?: string;
   metadata?: ProbeMetadata;
-  targets: TargetInfo[];
+  target_count: number;
   last_seen: number;
 }
 
@@ -261,7 +261,7 @@ export interface TargetDetail {
   addr: string;
   asn?: number;
   org?: string;
-  probes: ProbeInfo[];
+  probe_count: number;
   nearby_hops: HotHop[];
   last_seen: number;
 }
@@ -307,8 +307,8 @@ export interface IPDetail {
   org?: string;
   af: number;
   last_seen: number;
-  in_hops: HotHop[];
-  out_hops: HotHop[];
+  incoming_hops: number;
+  outgoing_hops: number;
 }
 
 export interface PathHop {
@@ -411,10 +411,27 @@ export const api = {
     return getPage<ProbeInfo>(`/api/probes?${q}`);
   },
   probeDetail: (id: number) => get<ProbeDetail>(`/api/probe/${id}`),
+  probeTargets: (id: number, limit = 25, offset = 0, query = "", sort = "loss", order = "desc") => {
+    const q = new URLSearchParams({ limit: String(limit), offset: String(offset), sort, order });
+    if (query) q.set("q", query);
+    return getPage<TargetInfo>(`/api/probe/${id}/targets?${q}`);
+  },
   targets: (limit = 50) => get<TargetInfo[]>(`/api/targets?limit=${limit}`),
   targetDetail: (addr: string) =>
     get<TargetDetail>(`/api/target/${encodeURIComponent(addr)}`),
+  targetProbes: (addr: string, limit = 25, offset = 0, query = "", sort = "loss", order = "desc") => {
+    const q = new URLSearchParams({ limit: String(limit), offset: String(offset), sort, order });
+    if (query) q.set("q", query);
+    return getPage<ProbeInfo>(`/api/target/${encodeURIComponent(addr)}/probes?${q}`);
+  },
   ipDetail: (addr: string) => get<IPDetail>(`/api/ip/${encodeURIComponent(addr)}`),
+  ipHops: (addr: string, direction: "in" | "out", limit = 25, offset = 0, query = "", sort = "rtt", order = "desc") => {
+    const q = new URLSearchParams({
+      direction, limit: String(limit), offset: String(offset), sort, order,
+    });
+    if (query) q.set("q", query);
+    return getPage<HotHop>(`/api/ip/${encodeURIComponent(addr)}/hops?${q}`);
+  },
   hotHops: (limit = 25, offset = 0, minRtt = 100, query = "", sort = "rtt", order = "desc") => {
     const q = new URLSearchParams({
       limit: String(limit), offset: String(offset), min_rtt: String(minRtt), sort, order,

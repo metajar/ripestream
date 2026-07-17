@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ErrorState, LoadingState } from "@/components/ui/states";
+import { PaginationControls } from "@/components/PaginationControls";
+import { EmptyState, ErrorState, FetchingOverlay, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { probeName } from "@/lib/probes";
 import { fmtEpoch, fmtPct, fmtRtt, lossColor } from "@/lib/utils";
@@ -11,11 +13,21 @@ import { fmtEpoch, fmtPct, fmtRtt, lossColor } from "@/lib/utils";
 export function ProbeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const probeId = Number(id);
+  const [targetOffset, setTargetOffset] = useState(0);
+  const [targetQuery, setTargetQuery] = useState("");
   const { data, isLoading, error } = useQuery({
     queryKey: ["probe", probeId],
     queryFn: () => api.probeDetail(probeId),
     enabled: !!probeId,
   });
+  const targets = useQuery({
+    queryKey: ["probe-targets", probeId, targetOffset, targetQuery],
+    queryFn: () => api.probeTargets(probeId, 25, targetOffset, targetQuery.trim()),
+    enabled: !!probeId,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+  });
+  const targetsBusy = targets.isFetching && targets.isPlaceholderData;
 
   if (isLoading) return <LoadingState label={`Loading probe ${id}…`} />;
   if (error) return <ErrorState message={(error as Error).message} />;
@@ -43,7 +55,7 @@ export function ProbeDetailPage() {
           {data.src_asn ? (
             <> in {data.src_org || `AS${data.src_asn}`}</>
           ) : null}{" "}
-          measures <strong className="text-text-primary">{data.targets.length} {data.targets.length === 1 ? "target" : "targets"}</strong>.
+          measures <strong className="text-text-primary">{data.target_count} {data.target_count === 1 ? "target" : "targets"}</strong>.
         </p>
         <p className="mt-1 text-sm text-text-quaternary">
           Source IP: <span className="font-mono">{data.src_ip}</span>. Last seen {fmtEpoch(data.last_seen)}.
@@ -75,9 +87,24 @@ export function ProbeDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Targets ({data.targets.length})</CardTitle>
+          <CardTitle>Targets ({data.target_count})</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="relative">
+          <label className="mb-3 block text-xs text-text-quaternary">
+            Filter targets
+            <input
+              value={targetQuery}
+              onChange={(event) => { setTargetQuery(event.target.value); setTargetOffset(0); }}
+              placeholder="IP, ASN, organization, loss, RTT…"
+              className="mt-1 block w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs text-text-primary outline-none focus:border-brand-500"
+            />
+          </label>
+          {targets.isLoading && <LoadingState label="Loading targets…" />}
+          {targets.error && <ErrorState message={(targets.error as Error).message} />}
+          {targets.data && targets.data.data.length === 0 && (
+            <EmptyState label="No matching targets" hint="Try clearing the target filter." />
+          )}
+          {targets.data && targets.data.data.length > 0 && <>
           <Table>
             <THead>
               <tr>
@@ -89,7 +116,7 @@ export function ProbeDetailPage() {
               </tr>
             </THead>
             <TBody>
-              {data.targets.map((t) => (
+              {targets.data.data.map((t) => (
                 <Tr key={t.addr}>
                   <Td>
                     <Link to={`/target/${t.addr}`} className="font-mono text-xs text-brand-300 hover:text-brand-500">
@@ -114,6 +141,14 @@ export function ProbeDetailPage() {
               ))}
             </TBody>
           </Table>
+          <PaginationControls
+            meta={targets.data.meta}
+            rowCount={targets.data.data.length}
+            noun="targets"
+            onPage={setTargetOffset}
+          />
+          </>}
+          <FetchingOverlay active={targetsBusy} label="Loading targets…" />
         </CardContent>
       </Card>
     </div>
