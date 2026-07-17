@@ -19,6 +19,8 @@ func TestBuildHopCommonalityQueryIsBoundedAndExcludesDestination(t *testing.T) {
 		"HAVING probes >= 3",
 		"baseline_samples >= 12",
 		"LIMIT 40",
+		"uniqCombined64If(prb_id",
+		"SETTINGS max_threads = 2, max_block_size = 2048",
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q", want)

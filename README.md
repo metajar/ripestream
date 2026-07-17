@@ -28,7 +28,7 @@ RIPE Atlas stream ──NDJSON──▶  ripestream ──tee──▶ ClickHous
 - **FalkorDB writer** (`internal/graph`): filters to traceroute + ping, extracts
   hop paths / RTT health, and batch-`MERGE`s nodes and edges into a hybrid IP/ASN
   graph.
-- **Schema** (`schema.sql`): ClickHouse envelope + `result_json`, applied on startup.
+- **Schema** (`schema.sql`): ClickHouse envelope, typed PING metrics, and `result_json`, applied on startup.
 
 ## Graph model (FalkorDB)
 
@@ -124,6 +124,7 @@ then configure these Dokploy variables:
 | `R2_OBJECT_KEY` | no | Object key; defaults to `GeoLite2-ASN.mmdb` |
 | `R2_JURISDICTION` | no | `default`, `eu`, or `fedramp`; defaults to `default` |
 | `GEOLITE_DB_SHA256` | no | Expected SHA-256 checksum; startup fails on mismatch |
+| `CLICKHOUSE_MEMORY_LIMIT` | no | ClickHouse container memory limit; defaults to `8g` |
 
 Do not set the displayed Cloudflare API token value in Dokploy; the S3 client
 uses only its generated Access Key ID and Secret Access Key. Scope the token to
@@ -302,6 +303,11 @@ CREATE TABLE ripestream.atlas_results (
     dst_addr    String,
     src_addr    String,
     fw          UInt32,                    -- probe firmware
+    sent        UInt32,                    -- typed PING counters avoid historical JSON scans
+    rcvd        UInt32,
+    avg_rtt_ms  Float64,
+    min_rtt_ms  Float64,
+    max_rtt_ms  Float64,
     result_json String,                    -- complete original payload
     INDEX idx_result_json result_json TYPE tokenbf_v1(30720,3,0) GRANULARITY 4
 )
@@ -318,8 +324,8 @@ ORDER BY (type, msm_id, prb_id, timestamp);
 -- volume by measurement type
 SELECT type, count() FROM ripestream.atlas_results GROUP BY type ORDER BY 2 DESC;
 
--- average ping RTT, pulled straight from the JSON payload
-SELECT round(avg(toFloat64OrZero(JSONExtractString(result_json,'avg'))),3)
+-- average ping RTT from the typed ingestion projection
+SELECT round(avgIf(avg_rtt_ms, rcvd > 0),3)
 FROM ripestream.atlas_results WHERE type = 'ping';
 
 -- top destinations seen by traceroute

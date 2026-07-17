@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS ripestream.atlas_results
     dst_addr    String,
     src_addr    String,
     fw          UInt32,
+    sent        UInt32,
+    rcvd        UInt32,
+    avg_rtt_ms  Float64,
+    min_rtt_ms  Float64,
+    max_rtt_ms  Float64,
     result_json String CODEC(ZSTD(3)),
 
     -- Lets queries like `result_json LIKE '%rtt%'` skip irrelevant granules.
@@ -35,3 +40,11 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (type, msm_id, prb_id, timestamp)
 SETTINGS index_granularity = 8192;
+
+-- Idempotent migration for databases created before typed PING metrics were
+-- introduced. Existing rows receive zero defaults; new ingestion fills them.
+ALTER TABLE ripestream.atlas_results ADD COLUMN IF NOT EXISTS sent UInt32 AFTER fw;
+ALTER TABLE ripestream.atlas_results ADD COLUMN IF NOT EXISTS rcvd UInt32 AFTER sent;
+ALTER TABLE ripestream.atlas_results ADD COLUMN IF NOT EXISTS avg_rtt_ms Float64 AFTER rcvd;
+ALTER TABLE ripestream.atlas_results ADD COLUMN IF NOT EXISTS min_rtt_ms Float64 AFTER avg_rtt_ms;
+ALTER TABLE ripestream.atlas_results ADD COLUMN IF NOT EXISTS max_rtt_ms Float64 AFTER min_rtt_ms;

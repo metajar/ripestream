@@ -145,8 +145,8 @@ func buildPingTargetBaselinesQuery(db, table string, targets []string, from, to 
 
 	q := fmt.Sprintf(`
 SELECT dst_addr AS target,
-       sum(toInt64OrZero(JSONExtractString(result_json,'sent'))) AS sent,
-       sum(toInt64OrZero(JSONExtractString(result_json,'rcvd'))) AS rcvd,
+       sum(toInt64(sent)) AS sent,
+       sum(toInt64(rcvd)) AS rcvd,
        count() AS samples,
        uniqExact(prb_id) AS probes
 FROM %s.%s
@@ -173,11 +173,11 @@ type windowAgg struct {
 func (s *Store) windowAggregate(ctx context.Context, target string, probe int64, from, to time.Time) (windowAgg, error) {
 	q := fmt.Sprintf(`
 SELECT
-  sum(toInt64OrZero(JSONExtractString(result_json,'sent'))) AS sent,
-  sum(toInt64OrZero(JSONExtractString(result_json,'rcvd'))) AS rcvd,
+  sum(toInt64(sent)) AS sent,
+  sum(toInt64(rcvd)) AS rcvd,
   count() AS samples,
-  avg(toFloat64OrZero(JSONExtractString(result_json,'avg'))) AS avg_rtt,
-  quantile(0.5)(toFloat64OrZero(JSONExtractString(result_json,'avg'))) AS med_rtt
+  avgIf(avg_rtt_ms, rcvd > 0) AS avg_rtt,
+  quantileIf(0.5)(avg_rtt_ms, rcvd > 0) AS med_rtt
 FROM %s.%s
 WHERE type = 'ping'
   AND timestamp >= toDateTime(%d)

@@ -17,7 +17,7 @@ func TestBuildPingTargetBaselinesQueryScopesAndEscapes(t *testing.T) {
 	if len(targets) != 2 {
 		t.Fatalf("targets = %#v, want 2 unique values", targets)
 	}
-	for _, want := range []string{"FROM ripestream.atlas_results", "timestamp >= toDateTime(100)", "timestamp < toDateTime(200)", "'bad\\'addr'"} {
+	for _, want := range []string{"FROM ripestream.atlas_results", "timestamp >= toDateTime(100)", "timestamp < toDateTime(200)", "'bad\\'addr'", "sum(toInt64(sent))"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q:\n%s", want, q)
 		}

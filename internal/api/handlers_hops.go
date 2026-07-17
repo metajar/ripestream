@@ -47,7 +47,8 @@ func (s *Server) hopCommonalities(w http.ResponseWriter, r *http.Request) {
 		Recent: recent, Baseline: baseline, MinProbes: qInt(r, "min_probes", 3), Limit: qInt(r, "limit", 40),
 	})
 	if err != nil {
-		respondError(w, http.StatusBadGateway, "route correlation query failed: "+err.Error())
+		slog.Warn("route correlation query failed", "err", err)
+		respondError(w, http.StatusServiceUnavailable, "route correlation query failed")
 		return
 	}
 

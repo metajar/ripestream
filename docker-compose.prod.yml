@@ -49,6 +49,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    mem_limit: ${CLICKHOUSE_MEMORY_LIMIT:-8g}
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in Dokploy}

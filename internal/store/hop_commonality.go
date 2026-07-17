@@ -116,9 +116,9 @@ SELECT addr,
        round(100.0 * delta_ms / nullIf(baseline_rtt, 0), 1) AS change_pct,
        countIf(timestamp >= toDateTime(%d)) AS recent_samples,
        countIf(timestamp < toDateTime(%d)) AS baseline_samples,
-       uniqExactIf(prb_id, timestamp >= toDateTime(%d)) AS probes,
-       uniqExactIf(dst_addr, timestamp >= toDateTime(%d)) AS targets,
-       uniqExactIf(tuple(msm_id, prb_id, timestamp), timestamp >= toDateTime(%d)) AS traces,
+       uniqCombined64If(prb_id, timestamp >= toDateTime(%d)) AS probes,
+       uniqCombined64If(dst_addr, timestamp >= toDateTime(%d)) AS targets,
+       uniqCombined64If(tuple(msm_id, prb_id, timestamp), timestamp >= toDateTime(%d)) AS traces,
        groupUniqArrayIf(12)(prb_id, timestamp >= toDateTime(%d)) AS affected_probes,
        groupUniqArrayIf(12)(dst_addr, timestamp >= toDateTime(%d)) AS affected_targets,
        minIf(timestamp, timestamp >= toDateTime(%d)) AS first_seen,
@@ -133,7 +133,8 @@ HAVING probes >= %d
    AND delta_ms >= 15
    AND recent_rtt >= baseline_rtt * 1.35
 ORDER BY impact_score DESC, probes DESC
-	LIMIT %d`, db, table, baselineStart, end,
+	LIMIT %d
+SETTINGS max_threads = 2, max_block_size = 2048`, db, table, baselineStart, end,
 		recentStart, recentStart, recentStart, recentStart, recentStart, recentStart,
 		recentStart, recentStart, recentStart, recentStart, recentStart,
 		minProbes, limit)

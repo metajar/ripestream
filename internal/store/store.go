@@ -74,15 +74,67 @@ func (s *Store) ApplySchema(ctx context.Context, schemaSQL string) error {
 	return nil
 }
 
-// splitStatements breaks the schema into individual statements on ';'.
-// The bundled schema.sql intentionally contains no ';' inside comments/strings.
+// splitStatements breaks the schema into individual statements on semicolons
+// outside quoted values and SQL line comments. Comments are discarded so a
+// comment-only fragment is never submitted to ClickHouse as an empty query.
 func splitStatements(s string) []string {
-	out := []string{}
-	for _, part := range strings.Split(s, ";") {
-		if strings.TrimSpace(part) != "" {
+	var out []string
+	var stmt strings.Builder
+	var quote byte
+	lineComment := false
+
+	flush := func() {
+		if part := strings.TrimSpace(stmt.String()); part != "" {
 			out = append(out, part)
 		}
+		stmt.Reset()
 	}
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if lineComment {
+			if ch == '\n' {
+				lineComment = false
+				stmt.WriteByte(ch)
+			}
+			continue
+		}
+		if quote != 0 {
+			stmt.WriteByte(ch)
+			if ch == '\\' && i+1 < len(s) {
+				i++
+				stmt.WriteByte(s[i])
+				continue
+			}
+			if ch == quote {
+				if i+1 < len(s) && s[i+1] == quote {
+					i++
+					stmt.WriteByte(s[i])
+					continue
+				}
+				quote = 0
+			}
+			continue
+		}
+
+		switch ch {
+		case '-':
+			if i+1 < len(s) && s[i+1] == '-' {
+				lineComment = true
+				i++
+				continue
+			}
+			stmt.WriteByte(ch)
+		case '\'', '"', '`':
+			quote = ch
+			stmt.WriteByte(ch)
+		case ';':
+			flush()
+		default:
+			stmt.WriteByte(ch)
+		}
+	}
+	flush()
 	return out
 }
 

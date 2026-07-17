@@ -17,7 +17,8 @@ func TestBuildPingPairSeriesQueryScopesAndEscapes(t *testing.T) {
 	for _, want := range []string{
 		"prb_id IN (2,9)",
 		"dst_addr IN ('192.0.2.1','x\\' OR 1=1 --')",
-		"JSONExtractString(result_json,'avg')",
+		"avg_rtt_ms",
+		"toFloat64(sent)",
 		"uniqExact(prb_id)",
 	} {
 		if !strings.Contains(q, want) {

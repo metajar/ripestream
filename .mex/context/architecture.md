@@ -31,7 +31,7 @@ Parallel errgroup runs HTTP API server with embedded React UI, alerting evaluato
 ## Key Components
 - **internal/atlas** — RIPE Atlas stream client with auto-reconnect, exponential backoff, idle timeout watchdog. One connection per subscription filter (msm/prb IDs or firehose). Emits parsed Records on channel.
 - **internal/pipeline** — Tee fans each record to multiple sink channels without blocking the firehose. Drops records only when a sink channel is full (backpressure).
-- **internal/store** — ClickHouse HTTP client with batching, JSONEachRow inserts, retry logic, and graceful shutdown. Applies schema.sql on startup.
+- **internal/store** — ClickHouse HTTP client with batching, JSONEachRow inserts, retry logic, and graceful shutdown. Applies schema.sql on startup. Projects PING packet counters and RTT summaries into typed columns so historical health queries do not repeatedly parse the raw JSON firehose under production memory pressure.
 - **internal/graph** — FalkorDB graph writer for traceroute paths and ping health. Enriches IPs with ASN from GeoLite2 database, keeps a single current probe location, batch MERGEs nodes/edges, and prunes stale live-state data on a bounded schedule. Separate Reader interface for API queries.
 - **internal/alert** — Alerting engine with SQLite store, evaluator that ticks on interval, manager for API CRUD. Rule definitions evaluate against live graph state.
 - **internal/api** — HTTP API server serving /api/* routes. Reads from graph.Reader and store.Reader. Returns 503 when dependencies unavailable (graph disabled, alerting disabled). Caches expensive overview queries.

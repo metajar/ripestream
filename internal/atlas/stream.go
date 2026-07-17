@@ -38,19 +38,24 @@ const DefaultBaseURL = "https://atlas-stream.ripe.net/api/v2/stream/"
 // Record is the universal projection of an atlas_result plus the verbatim
 // payload. JSON tags line up with the ClickHouse atlas_results columns.
 type Record struct {
-	Timestamp  int64  `json:"timestamp"`
-	MsmID      uint32 `json:"msm_id"`
-	PrbID      uint32 `json:"prb_id"`
-	Type       string `json:"type"`
-	MsmName    string `json:"msm_name"`
-	FromIP     string `json:"from_ip"`
-	AF         uint8  `json:"af"`
-	Proto      string `json:"proto"`
-	DstName    string `json:"dst_name"`
-	DstAddr    string `json:"dst_addr"`
-	SrcAddr    string `json:"src_addr"`
-	FW         uint32 `json:"fw"`
-	ResultJSON string `json:"result_json"`
+	Timestamp  int64   `json:"timestamp"`
+	MsmID      uint32  `json:"msm_id"`
+	PrbID      uint32  `json:"prb_id"`
+	Type       string  `json:"type"`
+	MsmName    string  `json:"msm_name"`
+	FromIP     string  `json:"from_ip"`
+	AF         uint8   `json:"af"`
+	Proto      string  `json:"proto"`
+	DstName    string  `json:"dst_name"`
+	DstAddr    string  `json:"dst_addr"`
+	SrcAddr    string  `json:"src_addr"`
+	FW         uint32  `json:"fw"`
+	Sent       uint32  `json:"sent"`
+	Rcvd       uint32  `json:"rcvd"`
+	AvgRttMs   float64 `json:"avg_rtt_ms"`
+	MinRttMs   float64 `json:"min_rtt_ms"`
+	MaxRttMs   float64 `json:"max_rtt_ms"`
+	ResultJSON string  `json:"result_json"`
 }
 
 // Params configures the subscription. If both MSM and PRB are empty the reader
@@ -83,6 +88,11 @@ type payload struct {
 	MsmID   uint32  `json:"msm_id"`
 	PrbID   uint32  `json:"prb_id"`
 	Ts      int64   `json:"timestamp"`
+	Sent    uint32  `json:"sent"`
+	Rcvd    uint32  `json:"rcvd"`
+	Avg     float64 `json:"avg"`
+	Min     float64 `json:"min"`
+	Max     float64 `json:"max"`
 }
 
 // Subscribe opens one connection per subscription filter (or a single firehose
@@ -312,6 +322,11 @@ func handleLine(line string, out chan<- Record, ctx context.Context) (int64, err
 		DstAddr:    pl.DstAddr,
 		SrcAddr:    pl.SrcAddr,
 		FW:         deref32(pl.FW),
+		Sent:       pl.Sent,
+		Rcvd:       pl.Rcvd,
+		AvgRttMs:   pl.Avg,
+		MinRttMs:   pl.Min,
+		MaxRttMs:   pl.Max,
 	}
 	if rec.Timestamp == 0 || rec.MsmID == 0 {
 		slog.Debug("atlas result missing identity fields, dropping", "rec", rec)

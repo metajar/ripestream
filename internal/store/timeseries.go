@@ -28,7 +28,8 @@ type PairSeriesPoint struct {
 
 // PingSeries pulls aggregated ping metrics from the raw atlas_results table,
 // bucketed into N intervals over [from, to]. Because all metrics live in the
-// result_json payload, we use ClickHouse's JSONExtract* functions.
+// typed columns populated during ingestion. This avoids repeatedly parsing the
+// full result_json payload across large historical windows.
 //
 // metric ∈ {"loss_pct", "avg_rtt_ms", "min_rtt_ms", "max_rtt_ms"}.
 // probe (0 = any), target ("" = any) scope the rows. buckets defaults to 60.
@@ -50,14 +51,9 @@ func (s *Store) PingSeries(ctx context.Context, metric string, probe int64, targ
 	switch metric {
 	case "loss_pct":
 		// loss = (sent-rcvd)/sent * 100. Guard divide-by-zero.
-		expr = "round(100.0 * (toFloat64OrZero(JSONExtractString(result_json,'sent')) - " +
-			"toFloat64OrZero(JSONExtractString(result_json,'rcvd'))) / " +
-			"nullIf(toFloat64OrZero(JSONExtractString(result_json,'sent')), 0))"
+		expr = "round(100.0 * (toFloat64(sent) - toFloat64(rcvd)) / nullIf(toFloat64(sent), 0))"
 	case "avg_rtt_ms", "min_rtt_ms", "max_rtt_ms":
-		// RIPE Atlas payload keys are avg/min/max; the API uses explicit metric
-		// names so callers know these values are RTT milliseconds.
-		jsonKey := strings.TrimSuffix(metric, "_rtt_ms")
-		expr = "toFloat64OrZero(JSONExtractString(result_json, " + EscStr(jsonKey) + "))"
+		expr = metric
 	default:
 		return nil, fmt.Errorf("unknown metric %q", metric)
 	}
@@ -193,9 +189,9 @@ func buildPingPairSeriesQuery(db, table string, probes []int64, targets []string
 	if interval < 1 {
 		interval = 1
 	}
-	sent := "toFloat64OrZero(JSONExtractString(result_json,'sent'))"
-	rcvd := "toFloat64OrZero(JSONExtractString(result_json,'rcvd'))"
-	avg := "toFloat64OrZero(JSONExtractString(result_json,'avg'))"
+	sent := "toFloat64(sent)"
+	rcvd := "toFloat64(rcvd)"
+	avg := "avg_rtt_ms"
 	return fmt.Sprintf(`
 SELECT toStartOfInterval(timestamp, INTERVAL %d SECOND) AS bkt,
        round(100.0 * (sum(%s) - sum(%s)) / nullIf(sum(%s), 0), 1) AS loss_pct,

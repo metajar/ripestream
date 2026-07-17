@@ -125,7 +125,7 @@ func (s *Server) targets(w http.ResponseWriter, r *http.Request) {
 	baselines, err := s.ch.PingTargetBaselines(r.Context(), targets, baselineTo.Add(-24*time.Hour), baselineTo)
 	if err != nil {
 		slog.Warn("target baseline query failed", "err", err)
-		respondError(w, http.StatusBadGateway, "target baseline query failed")
+		respondError(w, http.StatusServiceUnavailable, "target baseline query failed")
 		return
 	}
 	respondOK(w, targetRegressionViews(candidates, baselines, requested))
