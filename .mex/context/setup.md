@@ -31,7 +31,7 @@ last_updated: 2026-07-17
 ## First-time Setup
 1. `git clone <repo>` && `cd ripestream`
 2. `cp .env.example .env` and fill in the ClickHouse password plus private R2 credentials
-3. `docker compose up -d --build` — builds and starts Ripestream, ClickHouse, and FalkorDB
+3. `docker compose -f docker-compose.prod.yml up -d --build` — builds and starts the server stack
 4. Open http://localhost:8080 for the web UI; a local Cloudflare Tunnel should target this address
 
 ## Environment Variables
@@ -53,7 +53,7 @@ last_updated: 2026-07-17
 - `RIPESTREAM_LOG_LEVEL` (default: info) — log level: debug|info|warn|error
 
 ## Common Commands
-- `docker compose up -d --build` — build and start the full stack, publishing the dashboard/API on host port 8080
+- `docker compose -f docker-compose.prod.yml up -d --build` — build and start the server stack, publishing the dashboard/API on host port 8080
 - `docker compose up -d clickhouse falkordb` — start only the databases for local binary development
 - `docker compose down` — stop containers
 - `go build -o ripestream .` — build Go binary
@@ -67,7 +67,7 @@ last_updated: 2026-07-17
 - `cd web && npm run build` — build UI for embedding
 
 ## Common Issues
-- **Cloudflare Tunnel deployment**: Run the default Compose stack and route the tunnel to `http://localhost:8080`. Only the application port is published; ClickHouse and FalkorDB remain private to the Compose network.
+- **Cloudflare Tunnel deployment**: Run `docker-compose.prod.yml` and route the tunnel to `http://localhost:8080`. Only the application port is published; ClickHouse and FalkorDB remain private to the Compose network.
 - **Production ASN download fails**: The R2 token needs Object Read access to the configured private bucket. Match `R2_JURISDICTION` to the bucket (`default`, `eu`, or `fedramp`) and set `R2_OBJECT_KEY` when the raw MMDB is not stored as `GeoLite2-ASN.mmdb`. An optional `GEOLITE_DB_SHA256` rejects a corrupt or unexpected object.
 - **ClickHouse connection refused**: Ensure Docker Compose is running (`docker compose ps`). Check ClickHouse container logs (`docker compose logs clickhouse`).
 - **FalkorDB timeout errors**: Increase ReadTimeout in `internal/graph/store.go` (currently 10s). Check FalkorDB container is healthy (`docker compose ps falkordb`).

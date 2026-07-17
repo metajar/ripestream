@@ -6,7 +6,7 @@ services:
     environment:
       RIPESTREAM_CLICKHOUSE: http://clickhouse:8123
       RIPESTREAM_USER: ${CLICKHOUSE_USER:-default}
-      RIPESTREAM_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in Dokploy}
+      RIPESTREAM_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
       RIPESTREAM_DB: ${CLICKHOUSE_DB:-ripestream}
       RIPESTREAM_FALKOR_ADDR: falkordb:6379
       RIPESTREAM_FALKOR_GRAPH: ${FALKORDB_GRAPH:-ripestream}
@@ -19,14 +19,14 @@ services:
       RIPESTREAM_LOG_LEVEL: ${RIPESTREAM_LOG_LEVEL:-info}
       GEOLITE_DB_PATH: /data/geolite/GeoLite2-ASN.mmdb
       GEOLITE_DB_SHA256: ${GEOLITE_DB_SHA256:-}
-      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:?Set R2_ACCOUNT_ID in Dokploy}
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID in Dokploy}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY in Dokploy}
-      R2_BUCKET: ${R2_BUCKET:?Set R2_BUCKET in Dokploy}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:?Set R2_ACCOUNT_ID in .env}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID in .env}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY in .env}
+      R2_BUCKET: ${R2_BUCKET:?Set R2_BUCKET in .env}
       R2_OBJECT_KEY: ${R2_OBJECT_KEY:-GeoLite2-ASN.mmdb}
       R2_JURISDICTION: ${R2_JURISDICTION:-default}
-    expose:
-      - "8080"
+    ports:
+      - "8080:8080"
     volumes:
       - ripestream-data:/data
     depends_on:
@@ -52,7 +52,7 @@ services:
     mem_limit: ${CLICKHOUSE_MEMORY_LIMIT:-8g}
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in Dokploy}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-ripestream}
     expose:
       - "8123"

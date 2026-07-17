@@ -96,7 +96,7 @@ several intervals to drain a large stale backlog without blocking ingestion.
 
 ## Docker Compose server deployment
 
-The default `docker-compose.yml` builds the embedded React UI and Go service,
+The server `docker-compose.prod.yml` builds the embedded React UI and Go service,
 downloads GeoLite2-ASN through R2's authenticated S3 API at startup, and runs
 the application with persistent ClickHouse, FalkorDB, and SQLite data. Port
 `8080` is bound on the host; point the Cloudflare Tunnel at
@@ -108,8 +108,8 @@ Create the server environment file and start the stack:
 ```bash
 cp .env.example .env
 # Edit .env before continuing.
-docker compose config
-docker compose up -d --build
+docker compose -f docker-compose.prod.yml config
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 Upload the raw, uncompressed `GeoLite2-ASN.mmdb` file to the private R2 bucket,
