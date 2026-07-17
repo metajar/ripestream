@@ -71,12 +71,14 @@ type overviewMeta struct {
 // Supports validated sort (loss|probes|samples|last_seen|impact, default impact),
 // order (asc|desc), min_probes, min_loss, and limit.
 func (s *Server) asnIssues(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pageParams(r, 25)
 	f := graph.ASNIssueFilter{
 		Role:      r.URL.Query().Get("role"),
 		MinLoss:   qFloat(r, "min_loss", 0.1),
 		MinProbes: qInt64(r, "min_probes"),
-		Limit:     qInt(r, "limit", 20),
-		Offset:    qInt(r, "offset", 0),
+		Limit:     limit + 1,
+		Offset:    offset,
+		Query:     r.URL.Query().Get("q"),
 		Sort:      r.URL.Query().Get("sort"),
 		Order:     r.URL.Query().Get("order"),
 	}
@@ -86,15 +88,5 @@ func (s *Server) asnIssues(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadGateway, "graph query failed: "+err.Error())
 		return
 	}
-	// Pagination meta: report effective limit/offset and whether more may exist.
-	// We don't claim an exact total (a separate count query is expensive); the
-	// frontend uses has_more (returned a full page) to offer Load more.
-	hasMore := len(out) >= f.Limit
-	writeJSON(w, http.StatusOK, envelope{
-		Data: out,
-		Meta: map[string]any{
-			"limit": f.Limit, "offset": f.Offset, "sort": f.Sort,
-			"order": f.Order, "has_more": hasMore,
-		},
-	})
+	respondPage(w, out, limit, offset)
 }

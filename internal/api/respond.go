@@ -77,6 +77,41 @@ func qInt64(r *http.Request, key string) int64 {
 	return n
 }
 
+type pageMeta struct {
+	Limit   int  `json:"limit"`
+	Offset  int  `json:"offset"`
+	HasMore bool `json:"has_more"`
+}
+
+// pageParams returns a bounded page size and a non-negative offset. List
+// handlers request one additional row from their data store so has_more can be
+// reported without running a separate full count query.
+func pageParams(r *http.Request, defaultLimit int) (limit, offset int) {
+	limit = qInt(r, "limit", defaultLimit)
+	if limit < 1 {
+		limit = defaultLimit
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset = qInt(r, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+func respondPage[T any](w http.ResponseWriter, rows []T, limit, offset int) {
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writeJSON(w, http.StatusOK, envelope{
+		Data: rows,
+		Meta: pageMeta{Limit: limit, Offset: offset, HasMore: hasMore},
+	})
+}
+
 // ---- middleware -------------------------------------------------------------
 
 type statusRecorder struct {

@@ -65,6 +65,30 @@ func targetSortExpr(sort string) (expr string, ok bool) {
 	}
 }
 
+func hopSortExpr(sort string) (expr string, ok bool) {
+	switch sort {
+	case "rtt":
+		return "rtt", true
+	case "observations":
+		return "sc", true
+	case "last_seen":
+		return "ls", true
+	default:
+		return "", false
+	}
+}
+
+func transitSortExpr(sort string) (expr string, ok bool) {
+	switch sort {
+	case "observations":
+		return "sc", true
+	case "last_seen":
+		return "ls", true
+	default:
+		return "", false
+	}
+}
+
 // validatedSort picks a valid sort expression or falls back to defExpr. This
 // guarantees untrusted query input can never reach the Cypher ORDER BY clause.
 func validatedSort(sort string, defExpr string, pick func(string) (string, bool)) string {

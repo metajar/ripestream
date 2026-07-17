@@ -45,6 +45,7 @@ Parallel errgroup runs HTTP API server with embedded React UI, alerting evaluato
 - **FalkorDB** — graph database (Redis protocol) for live IP/ASN topology. Requires range indexes on Probe.id, IP.addr, AS.asn. Connection pool size 20, read timeout 10s.
 - **GeoLite2-ASN** — MaxMind MMDB for IP→ASN mapping. Optional enrichment via internal/asn.LookupASN interface.
 - **React UI** — embedded via go:embed web/dist, served at root path. API routes at /api/*.
+- Large graph-backed worklists return bounded offset pages with `has_more` metadata; filters execute in FalkorDB before pagination rather than transferring full result sets to React.
 
 ## What Does NOT Exist Here
 - No authentication/authorization — API is open, assumes firewall/network-level access control

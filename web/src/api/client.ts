@@ -34,6 +34,25 @@ async function getWithMeta<T, M = unknown>(path: string): Promise<{ data: T; met
   return { data: body.data as T, meta: body.meta };
 }
 
+export interface PageMeta {
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface Page<T> {
+  data: T[];
+  meta: PageMeta;
+}
+
+async function getPage<T>(path: string): Promise<Page<T>> {
+  const response = await getWithMeta<T[], PageMeta>(path);
+  return {
+    data: response.data,
+    meta: response.meta ?? { limit: response.data.length, offset: 0, has_more: false },
+  };
+}
+
 // OverviewMeta mirrors internal/api overviewMeta: cache freshness for the
 // overview endpoint. last_ok is a boolean (last refresh succeeded), NOT a
 // timestamp — do not label it "last refreshed at".
@@ -369,10 +388,13 @@ export interface AlertRuleView {
 
 export const api = {
   overview: () => getWithMeta<Overview, OverviewMeta>("/api/overview"),
-  asnIssues: (role: "src" | "dst", limit = 20, sort = "impact", order = "desc", minProbes = 2) =>
-    get<ASNIssue[]>(
-      `/api/asn/issues?role=${role}&limit=${limit}&sort=${sort}&order=${order}&min_probes=${minProbes}`,
-    ),
+  asnIssues: (role: "src" | "dst", limit = 25, offset = 0, sort = "impact", order = "desc", minProbes = 2, query = "") => {
+    const q = new URLSearchParams({
+      role, limit: String(limit), offset: String(offset), sort, order, min_probes: String(minProbes),
+    });
+    if (query) q.set("q", query);
+    return getPage<ASNIssue>(`/api/asn/issues?${q}`);
+  },
   asnDetail: (asn: number) => get<ASNDetail>(`/api/asn/${asn}`),
   asnProbes: (asn: number, limit = 50) =>
     get<ProbeInfo[]>(`/api/asn/${asn}/probes?limit=${limit}`),
@@ -380,26 +402,35 @@ export const api = {
     get<TargetInfo[]>(`/api/asn/${asn}/targets?limit=${limit}`),
   asnTransit: (asn: number, limit = 50) =>
     get<ASNTransitEdge[]>(`/api/asn/${asn}/transit?limit=${limit}`),
-  probes: (limit = 50, filters: { country?: string; type?: string; status?: string } = {}) => {
-    const q = new URLSearchParams({ limit: String(limit) });
+  probes: (limit = 25, offset = 0, filters: { country?: string; type?: string; status?: string; query?: string } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (filters.country) q.set("country", filters.country);
     if (filters.type) q.set("type", filters.type);
     if (filters.status) q.set("status", filters.status);
-    return get<ProbeInfo[]>(`/api/probes?${q}`);
+    if (filters.query) q.set("q", filters.query);
+    return getPage<ProbeInfo>(`/api/probes?${q}`);
   },
   probeDetail: (id: number) => get<ProbeDetail>(`/api/probe/${id}`),
   targets: (limit = 50) => get<TargetInfo[]>(`/api/targets?limit=${limit}`),
   targetDetail: (addr: string) =>
     get<TargetDetail>(`/api/target/${encodeURIComponent(addr)}`),
   ipDetail: (addr: string) => get<IPDetail>(`/api/ip/${encodeURIComponent(addr)}`),
-  hotHops: (limit = 50, minRtt = 100) =>
-    get<HotHop[]>(`/api/hops/hotspots?limit=${limit}&min_rtt=${minRtt}`),
+  hotHops: (limit = 25, offset = 0, minRtt = 100, query = "", sort = "rtt", order = "desc") => {
+    const q = new URLSearchParams({
+      limit: String(limit), offset: String(offset), min_rtt: String(minRtt), sort, order,
+    });
+    if (query) q.set("q", query);
+    return getPage<HotHop>(`/api/hops/hotspots?${q}`);
+  },
   hopCommonalities: (range = "30m", minProbes = 3, limit = 40) =>
     get<HopCommonalityResponse>(
       `/api/hops/commonality?range=${encodeURIComponent(range)}&min_probes=${minProbes}&limit=${limit}`,
     ),
-  transitEdges: (limit = 50) =>
-    get<ASNTransitEdge[]>(`/api/transit?limit=${limit}`),
+  transitEdges: (limit = 25, offset = 0, query = "", sort = "observations", order = "desc") => {
+    const q = new URLSearchParams({ limit: String(limit), offset: String(offset), sort, order });
+    if (query) q.set("q", query);
+    return getPage<ASNTransitEdge>(`/api/transit?${q}`);
+  },
   transitPairDetail: (a: number, b: number) =>
     get<TransitPairDetail>(`/api/transit/${a}/${b}`),
   transitPairSeries: (a: number, b: number, range = "24h", buckets = 60) =>

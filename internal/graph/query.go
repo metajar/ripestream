@@ -506,6 +506,7 @@ type ASNIssueFilter struct {
 	MinSourceASes int64
 	Limit         int
 	Offset        int
+	Query         string // case-insensitive match across every returned field
 	Sort          string // loss | probes | samples | last_seen | impact
 	Order         string // desc | asc
 }
@@ -524,6 +525,8 @@ type ProbeFilter struct {
 	Type      string // anchor | software | hardware
 	Status    string // RIPE Atlas status name
 	Limit     int
+	Offset    int
+	Query     string // case-insensitive match across every returned field
 	MinProbes int64
 	Sort      string // loss | rtt | last_seen
 	Order     string
@@ -540,10 +543,18 @@ type TargetFilter struct {
 type HopFilter struct {
 	MinRtt float64
 	Limit  int
+	Offset int
+	Query  string // case-insensitive match across every returned field
+	Sort   string // rtt | observations | last_seen
+	Order  string
 }
 
 type TransitFilter struct {
-	Limit int
+	Limit  int
+	Offset int
+	Query  string // case-insensitive match across every returned field
+	Sort   string // observations | last_seen
+	Order  string
 }
 
 type SubgraphFilter struct {

@@ -101,7 +101,10 @@ func (s *Store) countOneParams(ctx context.Context, cypher string, params map[st
 // ---- ASN issues (single-AS ranking) ----------------------------------------
 
 func (s *Store) ASNIssues(ctx context.Context, f ASNIssueFilter) ([]ASNIssue, error) {
-	f.Limit = clampLimit(f.Limit, 20, 100)
+	f.Limit = clampLimit(f.Limit, 20, 101)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
 	if f.MinLoss <= 0 {
 		f.MinLoss = 0.1
 	}
@@ -122,6 +125,7 @@ func (s *Store) ASNIssues(ctx context.Context, f ASNIssueFilter) ([]ASNIssue, er
 	if minSourceASes < 1 {
 		minSourceASes = 1
 	}
+	query := strings.ToLower(strings.TrimSpace(f.Query))
 
 	var q string
 	if role == "src" {
@@ -137,12 +141,19 @@ WITH as.asn AS asn, as.org AS org,
 WITH asn, org, samples, max_loss, avg_rtt, probes, targets, last_seen,
 	 (1.0 * (sent - rcvd) / sent) AS avg_loss
 WHERE probes >= $minProbes AND avg_loss >= $minLoss
+  AND ($query = '' OR toString(asn) CONTAINS $query OR ('as' + toString(asn)) CONTAINS $query OR toLower(coalesce(org, '')) CONTAINS $query
+       OR toString(samples) CONTAINS $query OR toString(probes) CONTAINS $query
+       OR toString(targets) CONTAINS $query OR toString(round(100.0*avg_loss)) CONTAINS $query
+       OR toString(round(avg_rtt)) CONTAINS $query OR toString(last_seen) CONTAINS $query
+       OR ($query = 'critical' AND avg_loss >= 0.8)
+       OR ($query = 'high' AND avg_loss >= 0.2 AND avg_loss < 0.8)
+       OR ($query = 'watch' AND avg_loss > 0 AND avg_loss < 0.2))
 WITH asn, org, samples, avg_loss, max_loss, avg_rtt, probes, targets, last_seen,
 	 avg_loss * probes AS impact
 RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
 	   round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms,
 	   probes, 1 AS source_ases, targets, last_seen
-ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
+ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC, asn ASC SKIP $offset LIMIT $limit`
 	} else {
 		q = `
 MATCH (p:Probe)-[allPing:PING]->()
@@ -160,17 +171,26 @@ WITH as.asn AS asn, as.org AS org,
 WITH asn, org, samples, max_loss, avg_rtt, probes, source_ases, targets, last_seen,
 	 (1.0 * (sent - rcvd) / sent) AS avg_loss
 WHERE probes >= $minProbes AND source_ases >= $minSourceASes AND avg_loss >= $minLoss
+  AND ($query = '' OR toString(asn) CONTAINS $query OR ('as' + toString(asn)) CONTAINS $query OR toLower(coalesce(org, '')) CONTAINS $query
+       OR toString(samples) CONTAINS $query OR toString(probes) CONTAINS $query
+       OR toString(source_ases) CONTAINS $query OR toString(targets) CONTAINS $query
+       OR toString(round(100.0*avg_loss)) CONTAINS $query OR toString(round(avg_rtt)) CONTAINS $query
+       OR toString(last_seen) CONTAINS $query
+       OR ($query = 'critical' AND avg_loss >= 0.8)
+       OR ($query = 'high' AND avg_loss >= 0.2 AND avg_loss < 0.8)
+       OR ($query = 'watch' AND avg_loss > 0 AND avg_loss < 0.2))
 WITH asn, org, samples, avg_loss, max_loss, avg_rtt, probes, source_ases, targets, last_seen,
 	 avg_loss * probes AS impact
 RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
 	   round(100.0*max_loss) AS max_loss_pct, round(avg_rtt) AS avg_rtt_ms,
 	   probes, source_ases, targets, last_seen
-ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC SKIP $offset LIMIT $limit`
+ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC, asn ASC SKIP $offset LIMIT $limit`
 	}
 	rows, err := s.rows(ctx, q, map[string]any{
 		"minLoss": f.MinLoss, "limit": f.Limit, "minProbes": minProbes, "offset": f.Offset,
 		"cutoff": s.activeCutoff(), "qualityTargets": 3, "maxProbeLoss": 0.8,
 		"minSourceASes": minSourceASes,
+		"query":         query,
 	})
 	if err != nil {
 		return nil, err
@@ -371,12 +391,18 @@ ORDER BY sc DESC LIMIT $limit`, map[string]any{"asn": asn, "limit": limit})
 // ---- Probe ------------------------------------------------------------------
 
 func (s *Store) Probes(ctx context.Context, f ProbeFilter) ([]ProbeInfo, error) {
-	f.Limit = clampLimit(f.Limit, 50, 500)
+	f.Limit = clampLimit(f.Limit, 50, 501)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
 	if f.ASN > 0 {
 		return s.ASNProbes(ctx, f.ASN, f.Limit)
 	}
 	conditions := []string{"avg_loss > $minLoss"}
-	params := map[string]any{"limit": f.Limit, "cutoff": s.activeCutoff(), "minLoss": 0.2}
+	params := map[string]any{
+		"limit": f.Limit, "offset": f.Offset, "cutoff": s.activeCutoff(), "minLoss": 0.2,
+		"query": strings.ToLower(strings.TrimSpace(f.Query)),
+	}
 	if country := strings.ToUpper(strings.TrimSpace(f.Country)); len(country) == 2 {
 		conditions = append(conditions, "p.country_code = $country")
 		params["country"] = country
@@ -399,6 +425,19 @@ func (s *Store) Probes(ctx context.Context, f ProbeFilter) ([]ProbeInfo, error) 
 	}
 	sortExpr := validatedSort(f.Sort, "avg_loss", probeSortExpr)
 	dir := sortDir(f.Order)
+	conditions = append(conditions, `($query = '' OR toString(p.id) CONTAINS $query
+       OR toLower(coalesce(p.display_name, '')) CONTAINS $query
+       OR toLower(coalesce(p.description, '')) CONTAINS $query
+       OR toLower(coalesce(p.probe_type, '')) CONTAINS $query
+       OR toLower(coalesce(p.country_code, '')) CONTAINS $query
+       OR toLower(coalesce(p.status_name, '')) CONTAINS $query
+       OR toLower(coalesce(p.source_ip, '')) CONTAINS $query
+       OR toString(coalesce(p.source_asn, 0)) CONTAINS $query
+       OR ('as' + toString(coalesce(p.source_asn, 0))) CONTAINS $query
+       OR toLower(coalesce(p.source_org, '')) CONTAINS $query
+       OR toLower(coalesce(p.tag_slugs, '')) CONTAINS $query
+       OR toString(round(100.0*avg_loss)) CONTAINS $query
+       OR toString(round(avg_rtt)) CONTAINS $query OR toString(last_seen) CONTAINS $query)`)
 	rows, err := s.rows(ctx, `
 MATCH (p:Probe)-[e:PING]->()
 WHERE e.sent > 0 AND e.last_seen >= $cutoff
@@ -409,7 +448,7 @@ WHERE `+strings.Join(conditions, " AND ")+`
 RETURN p.id AS id, p.source_ip AS src_ip, p.source_asn AS asn, p.source_org AS org,
        round(100.0*avg_loss) AS loss_pct, round(avg_rtt) AS rtt, last_seen,
        `+probeMetadataProjection+`
-ORDER BY `+sortExpr+` `+dir+`, last_seen DESC LIMIT $limit`, params)
+ORDER BY `+sortExpr+` `+dir+`, last_seen DESC, id ASC SKIP $offset LIMIT $limit`, params)
 	if err != nil {
 		return nil, err
 	}
@@ -568,10 +607,15 @@ ORDER BY e.loss_ratio DESC, e.last_seen DESC LIMIT 100`, map[string]any{"addr": 
 // ---- Hops / Transit ---------------------------------------------------------
 
 func (s *Store) HotHops(ctx context.Context, f HopFilter) ([]HotHop, error) {
-	f.Limit = clampLimit(f.Limit, 50, 500)
+	f.Limit = clampLimit(f.Limit, 50, 501)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
 	if f.MinRtt <= 0 {
 		f.MinRtt = 100
 	}
+	sortExpr := validatedSort(f.Sort, "rtt", hopSortExpr)
+	dir := sortDir(f.Order)
 	rows, err := s.rows(ctx, `
 MATCH (a:IP)-[e:NEXT_HOP]->(b:IP)
 WHERE e.last_rtt_ms >= $minRtt
@@ -579,9 +623,13 @@ OPTIONAL MATCH (a)-[:IN_AS]->(aas:AS)
 OPTIONAL MATCH (b)-[:IN_AS]->(bas:AS)
 WITH a.addr AS fa, b.addr AS ta, e.last_rtt_ms AS rtt, e.seen_count AS sc, e.last_seen AS ls,
      aas.asn AS faasn, aas.org AS faorg, bas.asn AS taasn, bas.org AS taorg
+WHERE $query = '' OR toLower(fa) CONTAINS $query OR toLower(ta) CONTAINS $query
+   OR toString(coalesce(faasn, 0)) CONTAINS $query OR ('as' + toString(coalesce(faasn, 0))) CONTAINS $query OR toLower(coalesce(faorg, '')) CONTAINS $query
+   OR toString(coalesce(taasn, 0)) CONTAINS $query OR ('as' + toString(coalesce(taasn, 0))) CONTAINS $query OR toLower(coalesce(taorg, '')) CONTAINS $query
+   OR toString(round(rtt)) CONTAINS $query OR toString(sc) CONTAINS $query OR toString(ls) CONTAINS $query
 RETURN fa, ta, rtt, sc, ls, faasn, faorg, taasn, taorg
-ORDER BY rtt DESC LIMIT $limit`,
-		map[string]any{"minRtt": f.MinRtt, "limit": f.Limit})
+ORDER BY `+sortExpr+` `+dir+`, fa ASC, ta ASC SKIP $offset LIMIT $limit`,
+		map[string]any{"minRtt": f.MinRtt, "limit": f.Limit, "offset": f.Offset, "query": strings.ToLower(strings.TrimSpace(f.Query))})
 	if err != nil {
 		return nil, err
 	}
@@ -625,12 +673,23 @@ LIMIT 100`, map[string]any{"addrs": addrs})
 }
 
 func (s *Store) TransitEdges(ctx context.Context, f TransitFilter) ([]ASNTransitEdge, error) {
-	f.Limit = clampLimit(f.Limit, 50, 500)
+	f.Limit = clampLimit(f.Limit, 50, 501)
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	sortExpr := validatedSort(f.Sort, "sc", transitSortExpr)
+	dir := sortDir(f.Order)
 	rows, err := s.rows(ctx, `
 MATCH (a:AS)-[e:TRANSITS]->(b:AS)
-RETURN a.asn AS sasn, a.org AS sorg, b.asn AS dasn, b.org AS dorg,
-       e.seen_count AS sc, e.last_seen AS ls
-ORDER BY sc DESC LIMIT $limit`, map[string]any{"limit": f.Limit})
+WITH a.asn AS sasn, a.org AS sorg, b.asn AS dasn, b.org AS dorg,
+     e.seen_count AS sc, e.last_seen AS ls
+WHERE $query = '' OR toString(sasn) CONTAINS $query OR ('as' + toString(sasn)) CONTAINS $query OR toLower(coalesce(sorg, '')) CONTAINS $query
+   OR toString(dasn) CONTAINS $query OR ('as' + toString(dasn)) CONTAINS $query OR toLower(coalesce(dorg, '')) CONTAINS $query
+   OR toString(sc) CONTAINS $query OR toString(ls) CONTAINS $query
+RETURN sasn, sorg, dasn, dorg, sc, ls
+ORDER BY `+sortExpr+` `+dir+`, sasn ASC, dasn ASC SKIP $offset LIMIT $limit`, map[string]any{
+		"limit": f.Limit, "offset": f.Offset, "query": strings.ToLower(strings.TrimSpace(f.Query)),
+	})
 	if err != nil {
 		return nil, err
 	}

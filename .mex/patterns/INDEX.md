@@ -41,6 +41,7 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [add-alert-rule.md](add-alert-rule.md) | Adding a new alert rule type or evaluation logic |
 | [add-api-endpoint.md](add-api-endpoint.md) | Adding a new API endpoint with Go handler and React route |
 | [add-graph-query.md](add-graph-query.md) | Adding a new graph query feature or topology analysis |
+| [add-server-paginated-worklist.md](add-server-paginated-worklist.md) | Adding or extending a large list with server-side filtering and pagination |
 | [debug-api-json.md](debug-api-json.md) | Diagnosing empty or invalid API JSON responses from graph-backed pages |
 | [debug-stream-ingestion.md](debug-stream-ingestion.md) | Diagnosing failures in the RIPE Atlas stream ingestion pipeline |
 | [manage-graph-retention.md](manage-graph-retention.md) | Changing FalkorDB retention, pruning, or live-health freshness semantics |

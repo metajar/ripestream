@@ -88,11 +88,20 @@ func TestLiveUpsert(t *testing.T) {
 
 	// Exercise the production health queries against FalkorDB so Cypher changes
 	// for freshness and probe-quality filtering are integration-tested.
-	if _, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "src", Limit: 5}); err != nil {
+	if _, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "src", Limit: 5, Offset: 1, Query: "as15169"}); err != nil {
 		t.Fatalf("source AS issues: %v", err)
 	}
-	if _, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "dst", Limit: 5}); err != nil {
+	if _, err := s.ASNIssues(ctx, ASNIssueFilter{Role: "dst", Limit: 5, Query: "google"}); err != nil {
 		t.Fatalf("destination AS issues: %v", err)
+	}
+	if _, err := s.Probes(ctx, ProbeFilter{Limit: 5, Offset: 1, Query: "as15169"}); err != nil {
+		t.Fatalf("filtered probes: %v", err)
+	}
+	if _, err := s.HotHops(ctx, HopFilter{Limit: 5, Offset: 1, Query: "as15169", Sort: "observations"}); err != nil {
+		t.Fatalf("filtered hot hops: %v", err)
+	}
+	if _, err := s.TransitEdges(ctx, TransitFilter{Limit: 5, Offset: 1, Query: "as15169", Sort: "last_seen"}); err != nil {
+		t.Fatalf("filtered transit edges: %v", err)
 	}
 	if _, err := s.Overview(ctx); err != nil {
 		t.Fatalf("overview: %v", err)

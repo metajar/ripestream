@@ -6,8 +6,8 @@ import "testing"
 // can never reach the Cypher ORDER BY clause — it must fall back to the default.
 func TestValidatedSort_InjectionProof(t *testing.T) {
 	cases := []struct {
-		sort    string
-		want    string
+		sort string
+		want string
 	}{
 		{"loss", "avg_loss"},
 		{"probes", "probes"},
@@ -41,5 +41,17 @@ func TestSortDir(t *testing.T) {
 	}
 	if sortDir("malicious") != "DESC" {
 		t.Error(`sortDir("malicious") should fall back to DESC`)
+	}
+}
+
+func TestTransitAndHopSortsAreWhitelisted(t *testing.T) {
+	if got := validatedSort("observations", "sc", transitSortExpr); got != "sc" {
+		t.Fatalf("transit observations sort = %q", got)
+	}
+	if got := validatedSort("rtt", "rtt", hopSortExpr); got != "rtt" {
+		t.Fatalf("hop RTT sort = %q", got)
+	}
+	if got := validatedSort("rtt; DELETE", "sc", transitSortExpr); got != "sc" {
+		t.Fatalf("unsafe transit sort did not fall back: %q", got)
 	}
 }

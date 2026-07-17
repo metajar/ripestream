@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { SeverityBadge, severityFromLossPct } from "@/components/health";
 import { DEFAULT_WORKLIST, WorklistToolbar, type WorklistState } from "@/components/WorklistToolbar";
+import { PaginationControls } from "@/components/PaginationControls";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, ErrorState, Freshness, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
@@ -27,6 +28,8 @@ export function ASNsPage() {
     order: (searchParams.get("order") as "asc" | "desc") || DEFAULT_WORKLIST.order,
     minProbes: Number(searchParams.get("min_probes")) || DEFAULT_WORKLIST.minProbes,
   };
+  const offset = Math.max(0, Number(searchParams.get("offset")) || 0);
+  const query = searchParams.get("q") || "";
 
   function patchState(p: Partial<WorklistState>) {
     setSearchParams(
@@ -35,6 +38,7 @@ export function ASNsPage() {
         if (p.sort) next.set("sort", p.sort);
         if (p.order) next.set("order", p.order);
         if (p.minProbes != null) next.set("min_probes", String(p.minProbes));
+        next.delete("offset");
         return next;
       },
       { replace: true },
@@ -46,13 +50,15 @@ export function ASNsPage() {
       next.delete("sort");
       next.delete("order");
       next.delete("min_probes");
+      next.delete("q");
+      next.delete("offset");
       return next;
     }, { replace: true });
   }
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["asn-issues", role, state.sort, state.order, state.minProbes],
-    queryFn: () => api.asnIssues(role, 50, state.sort, state.order, state.minProbes),
+    queryKey: ["asn-issues", role, offset, state.sort, state.order, state.minProbes, query],
+    queryFn: () => api.asnIssues(role, 25, offset, state.sort, state.order, state.minProbes, query),
   });
 
   return (
@@ -68,7 +74,14 @@ export function ASNsPage() {
           {(["dst", "src"] as const).map((r) => (
             <button
               key={r}
-              onClick={() => setRole(r)}
+              onClick={() => {
+                setRole(r);
+                setSearchParams((prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("offset");
+                  return next;
+                }, { replace: true });
+              }}
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                 role === r ? "bg-brand-500 text-white" : "text-text-tertiary hover:text-text-primary"
               }`}
@@ -86,17 +99,32 @@ export function ASNsPage() {
             onChange={patchState}
             onClear={clearState}
             sortOptions={SORT_OPTIONS}
-            resultCount={data?.length}
+            resultCount={data?.data.length}
           />
+          <label className="my-3 block text-xs text-text-quaternary">
+            Filter any field
+            <input
+              value={query}
+              onChange={(event) => setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (event.target.value) next.set("q", event.target.value); else next.delete("q");
+                next.delete("offset");
+                return next;
+              }, { replace: true })}
+              placeholder="ASN, organization, samples, probes, loss, RTT…"
+              className="mt-1 block w-full rounded-md border border-border-primary bg-bg-tertiary px-3 py-2 text-xs text-text-primary outline-none focus:border-brand-500"
+            />
+          </label>
           {isLoading && <LoadingState />}
           {error && <ErrorState message={(error as Error).message} />}
-          {data && data.length === 0 && (
+          {data && data.data.length === 0 && (
             <EmptyState
               label="No ASes with notable observed loss"
               hint={`No AS meets the current threshold (min ${state.minProbes} probes). Try lowering the minimum or this may indicate a healthy network.`}
             />
           )}
-          {data && data.length > 0 && (
+          {data && data.data.length > 0 && (
+            <>
             <Table>
               <THead>
                 <tr>
@@ -110,7 +138,7 @@ export function ASNsPage() {
                 </tr>
               </THead>
               <TBody>
-                {data.map((a) => (
+                {data.data.map((a) => (
                   <Tr key={a.asn}>
                     <Td>
                       <Link
@@ -136,6 +164,17 @@ export function ASNsPage() {
                 ))}
               </TBody>
             </Table>
+            <PaginationControls
+              meta={data.meta}
+              rowCount={data.data.length}
+              noun="ASes"
+              onPage={(nextOffset) => setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (nextOffset) next.set("offset", String(nextOffset)); else next.delete("offset");
+                return next;
+              }, { replace: true })}
+            />
+            </>
           )}
         </CardContent>
       </Card>

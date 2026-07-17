@@ -80,26 +80,36 @@ func (s *Server) hopCommonalities(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hotHops(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pageParams(r, 25)
 	out, err := s.graph.HotHops(r.Context(), graph.HopFilter{
 		MinRtt: qFloat(r, "min_rtt", 100),
-		Limit:  qInt(r, "limit", 50),
+		Limit:  limit + 1,
+		Offset: offset,
+		Query:  r.URL.Query().Get("q"),
+		Sort:   r.URL.Query().Get("sort"),
+		Order:  r.URL.Query().Get("order"),
 	})
 	if err != nil {
 		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondOK(w, out)
+	respondPage(w, out, limit, offset)
 }
 
 func (s *Server) transitEdges(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pageParams(r, 25)
 	out, err := s.graph.TransitEdges(r.Context(), graph.TransitFilter{
-		Limit: qInt(r, "limit", 50),
+		Limit:  limit + 1,
+		Offset: offset,
+		Query:  r.URL.Query().Get("q"),
+		Sort:   r.URL.Query().Get("sort"),
+		Order:  r.URL.Query().Get("order"),
 	})
 	if err != nil {
 		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondOK(w, out)
+	respondPage(w, out, limit, offset)
 }
 
 func (s *Server) transitPairDetail(w http.ResponseWriter, r *http.Request) {

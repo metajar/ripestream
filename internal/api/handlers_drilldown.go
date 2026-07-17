@@ -67,13 +67,14 @@ func (s *Server) asnTransit(w http.ResponseWriter, r *http.Request) {
 // ---- Probes (UC2) -----------------------------------------------------------
 
 func (s *Server) probes(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pageParams(r, 25)
 	out, err := s.graph.Probes(r.Context(), probeFilterFromQuery(r))
 	if err != nil {
 		slog.Warn("probes query failed", "err", err)
 		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondOK(w, out)
+	respondPage(w, out, limit, offset)
 }
 
 func (s *Server) probeDetail(w http.ResponseWriter, r *http.Request) {

@@ -51,6 +51,7 @@ Then read this file fully before doing anything else in this session.
 - Cached RIPE Atlas probe names, types, locations, statuses, tags, and connection details with UI filters and search
 - Click-through IP detail pages showing ASN identity and observed incoming/outgoing traceroute hops
 - Route Correlation page detecting shared-hop RTT regressions across independent traceroutes against a 24-hour baseline, with live ASN and topology context
+- Server-paginated, server-filtered AS, probe, transit, and hop worklists with stable ordering; the Probes worklist does not poll while open
 
 **Not yet built:**
 - Email or external notification delivery (alerts are in-UI only)
