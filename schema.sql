@@ -43,10 +43,13 @@ TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE
 SETTINGS index_granularity = 8192;
 
 -- CREATE TABLE IF NOT EXISTS does not update existing installations. Keep the
--- retention migration explicit so applying the embedded schema also schedules
--- deletion of rows that are already older than 24 hours.
+-- retention migration explicit, but do not materialize pre-existing parts as
+-- part of startup: rewriting a populated table can exceed the client deadline.
+-- An installation that predates this TTL needs separately scheduled historical
+-- cleanup; new tables and newly inserted parts enforce the TTL normally.
 ALTER TABLE ripestream.atlas_results
-MODIFY TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE;
+MODIFY TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE
+SETTINGS materialize_ttl_after_modify = 0;
 
 -- Idempotent migration for databases created before typed PING metrics were
 -- introduced. Existing rows receive zero defaults; new ingestion fills them.
@@ -78,7 +81,8 @@ TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE
 SETTINGS index_granularity = 8192;
 
 ALTER TABLE ripestream.atlas_results_traceroute_hops
-MODIFY TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE;
+MODIFY TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE
+SETTINGS materialize_ttl_after_modify = 0;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS ripestream.atlas_results_traceroute_hops_mv
 TO ripestream.atlas_results_traceroute_hops

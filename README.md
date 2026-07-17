@@ -321,7 +321,10 @@ TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE;
 The raw results table and its typed traceroute-hop projection both expire rows
 24 hours after ingestion. ClickHouse applies TTL deletion asynchronously during
 background merges, so expired rows can remain briefly before their parts are
-rewritten or removed.
+rewritten or removed. Startup applies TTL metadata without materializing old
+parts so a deploy cannot block on a full-table rewrite. Databases upgraded from
+a version without TTL retention need a separately scheduled `MATERIALIZE TTL`
+or partition cleanup for data inserted before the TTL was added.
 
 ## Example queries
 

@@ -39,7 +39,7 @@ last_updated: 2026-07-17
 **Decision:** Expire raw Atlas rows and typed traceroute-hop rows 24 hours after ingestion, and prune FalkorDB observations after 24 hours by default.
 **Reasoning:** The firehose produces enough data that unbounded ClickHouse history and graph growth are operationally unsafe; a shared rolling horizon keeps both stores bounded and predictable.
 **Alternatives considered:** Keep unbounded ClickHouse history (rejected — storage grows continuously), retain a shorter graph horizon than ClickHouse (rejected — the requested operational horizon is 24 hours for both), or rely on manual cleanup (rejected — it is easy to miss and does not protect unattended deployments).
-**Consequences:** ClickHouse TTL cleanup is asynchronous during background merges, existing tables receive the TTL through idempotent startup ALTER statements, and historical features only have the observations still available inside the rolling 24-hour ingestion window.
+**Consequences:** ClickHouse TTL cleanup is asynchronous during background merges, existing tables receive TTL metadata through idempotent startup ALTER statements with `materialize_ttl_after_modify=0` so startup never rewrites populated tables, installations with parts that predate the TTL require separately scheduled historical cleanup, and historical features only have the observations still available inside the rolling 24-hour ingestion window.
 
 ### Extract traceroute hop observations at ingestion for route correlation
 **Date:** 2026-07-17

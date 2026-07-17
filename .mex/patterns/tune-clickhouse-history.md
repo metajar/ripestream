@@ -33,6 +33,7 @@ Read `internal/store/query.go` for the client deadline, `main.go` for the HTTP s
 - Raw nested traceroute JSON costs CPU even when aggregate memory is bounded. If candidate filtering and sampling are insufficient, add a typed hop-observation table rather than continuing to raise limits.
 - ClickHouse materialized views only process new inserts. Existing installations need a bounded, idempotently guarded backfill that covers the maximum query window, and its extraction SQL must stay identical to the view.
 - Multiple `arrayJoin` function calls produce a Cartesian product. Expand array indexes once and use `arrayElement` to retain aligned hop/reply positions.
+- `ALTER TABLE ... MODIFY TTL` can materialize existing parts and outlive the schema client's deadline. Startup TTL migrations must use `SETTINGS materialize_ttl_after_modify=0`; schedule `MATERIALIZE TTL` or partition cleanup separately when parts predating the TTL must be purged.
 
 ## Verify
 - Assert recent and baseline time bounds, candidate filtering, sampling, spill settings, and the final result limit in query-builder tests.
