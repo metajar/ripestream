@@ -263,6 +263,26 @@ func (s *Server) ipHops(w http.ResponseWriter, r *http.Request) {
 	respondPage(w, out, limit, offset)
 }
 
+func (s *Server) ipRouteGraph(w http.ResponseWriter, r *http.Request) {
+	if s.graph == nil {
+		respondError(w, http.StatusServiceUnavailable, "graph not enabled")
+		return
+	}
+	addr := r.PathValue("addr")
+	if addr == "" {
+		respondError(w, http.StatusBadRequest, "missing addr")
+		return
+	}
+	out, err := s.graph.IPRouteGraph(r.Context(), addr, graph.IPRouteGraphFilter{
+		MaxDepth: qInt(r, "max_depth", 15), NodeLimit: qInt(r, "node_limit", 400),
+	})
+	if err != nil {
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respondOK(w, out)
+}
+
 // ---- path-param helpers -----------------------------------------------------
 
 // pathInt64 reads an int64 path parameter, writing a 400 on parse failure.

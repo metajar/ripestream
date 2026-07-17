@@ -349,6 +349,9 @@ export interface GraphNode {
   asn?: number;
   org?: string;
   probe_metadata?: ProbeMetadata;
+  traversal_role?: "seed" | "upstream" | "downstream" | "both";
+  depth?: number;
+  last_seen?: number;
 }
 export interface GraphEdge {
   from: string;
@@ -357,10 +360,21 @@ export interface GraphEdge {
   last_rtt_ms?: number;
   loss_ratio?: number;
   seen_count?: number;
+  last_seen?: number;
 }
 export interface Subgraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export interface IPRouteGraph {
+  seed: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  complete: boolean;
+  max_depth: number;
+  node_limit: number;
+  truncation_reason?: string;
 }
 
 export interface SeriesPoint {
@@ -425,6 +439,10 @@ export const api = {
     return getPage<ProbeInfo>(`/api/target/${encodeURIComponent(addr)}/probes?${q}`);
   },
   ipDetail: (addr: string) => get<IPDetail>(`/api/ip/${encodeURIComponent(addr)}`),
+  ipRouteGraph: (addr: string, maxDepth = 15, nodeLimit = 400) =>
+    get<IPRouteGraph>(
+      `/api/ip/${encodeURIComponent(addr)}/graph?max_depth=${maxDepth}&node_limit=${nodeLimit}`,
+    ),
   ipHops: (addr: string, direction: "in" | "out", limit = 25, offset = 0, query = "", sort = "rtt", order = "desc") => {
     const q = new URLSearchParams({
       direction, limit: String(limit), offset: String(offset), sort, order,

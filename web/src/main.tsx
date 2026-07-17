@@ -33,6 +33,7 @@ const router = createBrowserRouter([
       { path: "targets", lazy: route(() => import("@/pages/TargetsPage"), "TargetsPage") },
       { path: "target/:addr", lazy: route(() => import("@/pages/TargetDetailPage"), "TargetDetailPage") },
       { path: "ip/:addr", lazy: route(() => import("@/pages/IPDetailPage"), "IPDetailPage") },
+      { path: "ip/:addr/graph", lazy: route(() => import("@/pages/IPRouteGraphPage"), "IPRouteGraphPage") },
       { path: "transit", lazy: route(() => import("@/pages/TransitPage"), "TransitPage") },
       { path: "correlation", lazy: route(() => import("@/pages/RouteCorrelationPage"), "RouteCorrelationPage") },
       { path: "transit/:asnA/:asnB", lazy: route(() => import("@/pages/TransitPairDetailPage"), "TransitPairDetailPage") },

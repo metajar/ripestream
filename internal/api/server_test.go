@@ -30,7 +30,7 @@ func TestWriteJSONNeverReturnsAnEmptyBodyOnEncodeFailure(t *testing.T) {
 
 func TestGraphEndpointsDegradeWhenDisabled(t *testing.T) {
 	s := New(nil, nil, nil, time.Minute)
-	for _, path := range []string{"/api/overview", "/api/issues", "/api/transit/1/2/series", "/api/hops/commonality"} {
+	for _, path := range []string{"/api/overview", "/api/issues", "/api/transit/1/2/series", "/api/hops/commonality", "/api/ip/192.0.2.1/graph"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		res := httptest.NewRecorder()
 		s.Handler().ServeHTTP(res, req)

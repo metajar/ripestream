@@ -128,6 +128,7 @@ func (s *Server) register() {
 	m.HandleFunc("GET /api/target/{addr}/probes", s.targetProbes)
 	m.HandleFunc("GET /api/ip/{addr}", s.ipDetail)
 	m.HandleFunc("GET /api/ip/{addr}/hops", s.ipHops)
+	m.HandleFunc("GET /api/ip/{addr}/graph", s.ipRouteGraph)
 
 	// Hops / Transit (UC3)
 	m.HandleFunc("GET /api/hops/commonality", s.hopCommonalities)

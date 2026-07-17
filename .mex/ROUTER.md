@@ -50,6 +50,7 @@ Then read this file fully before doing anything else in this session.
 - Bounded FalkorDB retention with batched stale-edge and orphan-node pruning
 - Cached RIPE Atlas probe names, types, locations, statuses, tags, and connection details with UI filters and search
 - Click-through IP detail pages showing ASN identity and observed incoming/outgoing traceroute hops
+- On-demand IP route graphs that traverse observed NEXT_HOP relationships upstream and downstream, with explicit completeness limits and a full-page source/destination IP/ASN-filterable explorer
 - Route Correlation page detecting shared-hop RTT regressions across independent traceroutes against a 24-hour baseline, with live ASN and topology context
 - Server-paginated, server-filtered AS, probe, transit, and hop worklists with stable ordering, including complete Probe→Targets, Target→Probes, and IP incoming/outgoing hop relationships; paged probe lists do not poll while open
 - Networking-themed RJ45/Cat5e loading spinner shared via `LoadingState` / `FetchingOverlay`; paginated worklists overlay it on query-key changes without blanking prior rows

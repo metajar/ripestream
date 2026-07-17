@@ -45,6 +45,7 @@ type Reader interface {
 	TransitPairTests(ctx context.Context, asnA, asnB int64, limit int) ([]TransitTest, error)
 	IPDetail(ctx context.Context, addr string) (IPDetail, error)
 	IPHops(ctx context.Context, addr, direction string, f HopFilter) ([]HotHop, error)
+	IPRouteGraph(ctx context.Context, addr string, f IPRouteGraphFilter) (IPRouteGraph, error)
 	Path(ctx context.Context, src, dst string, maxHops int) (Path, error)
 	ReachableDestinations(ctx context.Context, src string) ([]ReachableGroup, error)
 	Subgraph(ctx context.Context, f SubgraphFilter) (Subgraph, error)
@@ -489,6 +490,9 @@ type GraphNode struct {
 	ASN           *int64         `json:"asn,omitempty"`
 	Org           string         `json:"org,omitempty"`
 	ProbeMetadata *ProbeMetadata `json:"probe_metadata,omitempty"`
+	TraversalRole string         `json:"traversal_role,omitempty"` // seed | upstream | downstream | both
+	Depth         int            `json:"depth,omitempty"`
+	LastSeen      int64          `json:"last_seen,omitempty"`
 }
 
 type GraphEdge struct {
@@ -498,6 +502,20 @@ type GraphEdge struct {
 	LastRttMs float64 `json:"last_rtt_ms,omitempty"`
 	LossRatio float64 `json:"loss_ratio,omitempty"`
 	SeenCount int64   `json:"seen_count,omitempty"`
+	LastSeen  int64   `json:"last_seen,omitempty"`
+}
+
+// IPRouteGraph is the directed NEXT_HOP component observed before and after a
+// selected IP. Complete is true only when both traversal frontiers naturally
+// terminate before any safety limit is reached.
+type IPRouteGraph struct {
+	Seed             string      `json:"seed"`
+	Nodes            []GraphNode `json:"nodes"`
+	Edges            []GraphEdge `json:"edges"`
+	Complete         bool        `json:"complete"`
+	MaxDepth         int         `json:"max_depth"`
+	NodeLimit        int         `json:"node_limit"`
+	TruncationReason string      `json:"truncation_reason,omitempty"`
 }
 
 // ---- Filters ----------------------------------------------------------------
@@ -568,6 +586,11 @@ type SubgraphFilter struct {
 	Target string
 	Depth  int
 	Limit  int
+}
+
+type IPRouteGraphFilter struct {
+	MaxDepth  int
+	NodeLimit int
 }
 
 // ---- Filters: clamping ------------------------------------------------------

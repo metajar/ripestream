@@ -131,6 +131,10 @@ func TestLiveUpsert(t *testing.T) {
 	if err != nil || len(outHops) != 1 || outHops[0].ToAddr != "1.1.1.1" {
 		t.Fatalf("filtered outgoing hops = %#v, err = %v", outHops, err)
 	}
+	routeGraph, err := s.IPRouteGraph(ctx, "1.0.0.1", IPRouteGraphFilter{MaxDepth: 5, NodeLimit: 20})
+	if err != nil || len(routeGraph.Nodes) < 3 || len(routeGraph.Edges) < 2 {
+		t.Fatalf("IP route graph = %d nodes, %d edges, err = %v", len(routeGraph.Nodes), len(routeGraph.Edges), err)
+	}
 	if _, err := s.Overview(ctx); err != nil {
 		t.Fatalf("overview: %v", err)
 	}

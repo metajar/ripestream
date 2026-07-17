@@ -54,6 +54,7 @@ last_updated: 2026-07-17
 - **Probe reachability**: `MATCH (p:Probe {id: $id})-[:TARGETS|LOCATED_AT]->()` — find all IPs connected to a probe.
 - **Probe/target detail relationships**: paginate retained `PING` edges symmetrically in both directions. Do not apply the 30-minute health cutoff to only one direction; the cutoff belongs to health/incident views, while entity detail pages describe the retained live graph.
 - **IP hop detail relationships**: keep anchored incoming/outgoing NEXT_HOP counts on the IP summary and page each direction independently so high-degree hops remain completely traceable without transferring every edge.
+- **IP route graph**: expand incoming and outgoing `NEXT_HOP` frontiers independently with per-direction visited sets so cycles terminate safely and neither side can consume the entire shared node budget. Return all retained edges between selected nodes, plus explicit completion/truncation metadata; never imply a safety-bounded response is complete.
 - **Transit-pair endpoint tests**: anchor source and destination AS nodes, then match source-AS probes through current `PING` edges to destination-AS targets; present this as endpoint evidence, never proof that each ping crossed the selected `TRANSITS` edge.
 - **Target regressions**: aggregate every recent edge from quality-qualified probes before filtering by loss, require cross-network agreement, then compare candidates with ClickHouse history; persistent PING non-responders are not new incidents.
 - **Shared-hop regressions**: reconstruct route-level observations from ClickHouse history first, then batch-enrich the bounded candidate IPs from FalkorDB; never infer route commonality from the globally merged `NEXT_HOP` graph alone.
@@ -68,6 +69,7 @@ FalkorDB requires range indexes for MERGE lookups:
 `internal/graph.Reader` defines read operations used by the API:
 - `Overview()` — aggregate stats for the dashboard (probe count, IP count, AS count, active measurements)
 - `ProbeDetail()`, `ASNDetail()`, `IPDetail()` — entity-specific views with connections
+- `IPRouteGraph()` — cycle-safe directed traversal from an IP toward observed route beginnings and endings
 - `TransitPairs()`, `TransitDetail()` — AS-to-AS transit relationships
 - `TransitPairTests()` — active probe/measurement/target health evidence between a relationship's endpoint ASes
 - `HopContexts()` — batch ASN identity and incoming/outgoing topology breadth for historically correlated hop IPs

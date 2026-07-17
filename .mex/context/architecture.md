@@ -46,6 +46,7 @@ Parallel errgroup runs HTTP API server with embedded React UI, alerting evaluato
 - **GeoLite2-ASN** — MaxMind MMDB for IP→ASN mapping. Optional enrichment via internal/asn.LookupASN interface.
 - **React UI** — embedded via go:embed web/dist, served at root path. API routes at /api/*.
 - Large graph-backed worklists and nested probe/target/IP-hop relationships return bounded offset pages with `has_more` metadata; filters execute in FalkorDB before pagination rather than transferring full result sets to React. Detail relationship counts cover all retained PING or NEXT_HOP edges, while freshness-limited health detection remains a separate concern.
+- IP route-graph computation performs cycle-safe, directed breadth-first expansion over retained `NEXT_HOP` edges independently upstream and downstream. Responses are capped at 30 levels, 1,000 nodes, and 10,000 edges and explicitly report whether traversal terminated naturally or hit a safety boundary.
 
 ## What Does NOT Exist Here
 - No authentication/authorization — API is open, assumes firewall/network-level access control

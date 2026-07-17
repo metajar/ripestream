@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { Network } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type HotHop } from "@/api/client";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PaginationControls } from "@/components/PaginationControls";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, ErrorState, FetchingOverlay, LoadingState } from "@/components/ui/states";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { fmtEpoch, fmtNum, fmtRtt } from "@/lib/utils";
@@ -32,6 +34,13 @@ export function IPDetailPage() {
             <Badge variant="brand">{data.org || `AS${data.asn}`} · AS{data.asn}</Badge>
           </Link>
         )}
+        <Link
+          to={`/ip/${encodeURIComponent(data.addr)}/graph`}
+          className={`${buttonVariants({ size: "sm" })} ml-auto`}
+        >
+          <Network className="h-4 w-4" />
+          Compute graph
+        </Link>
       </div>
 
       <div className="rounded-lg border border-border-primary bg-bg-secondary p-4">

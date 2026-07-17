@@ -917,6 +917,187 @@ ORDER BY ` + sortExpr + ` ` + dir + `, ta ASC SKIP $offset LIMIT $limit`
 	return scanHotHops(rows), nil
 }
 
+// IPRouteGraph walks observed NEXT_HOP relationships independently toward
+// predecessors and successors. Per-direction visited sets make cycles safe,
+// while the shared node cap prevents a highly connected router from producing
+// an unbounded response.
+func (s *Store) IPRouteGraph(ctx context.Context, addr string, f IPRouteGraphFilter) (IPRouteGraph, error) {
+	f.MaxDepth = clampLimit(f.MaxDepth, 15, 30)
+	f.NodeLimit = clampLimit(f.NodeLimit, 400, 1000)
+	out := IPRouteGraph{
+		Seed: addr, MaxDepth: f.MaxDepth, NodeLimit: f.NodeLimit,
+		Nodes: make([]GraphNode, 0), Edges: make([]GraphEdge, 0),
+	}
+
+	seedRows, err := s.rows(ctx, `MATCH (seed:IP {addr: $addr}) RETURN id(seed) AS id`, map[string]any{"addr": addr})
+	if err != nil {
+		return out, fmt.Errorf("find route graph seed: %w", err)
+	}
+	if len(seedRows) == 0 {
+		return out, fmt.Errorf("ip %s not found", addr)
+	}
+	seedID := asInt(seedRows[0]["id"])
+	type traversalInfo struct {
+		upDepth   int
+		downDepth int
+	}
+	info := map[int64]traversalInfo{seedID: {}}
+	upSeen := map[int64]bool{seedID: true}
+	downSeen := map[int64]bool{seedID: true}
+	upFrontier := []any{seedID}
+	downFrontier := []any{seedID}
+	limited := false
+	reachedDepth := false
+
+	neighborIDs := func(frontier []any, incoming bool) ([]int64, error) {
+		if len(frontier) == 0 {
+			return nil, nil
+		}
+		query := `MATCH (a:IP)-[:NEXT_HOP]->(b:IP)
+WHERE id(a) IN $frontier
+RETURN DISTINCT id(b) AS id LIMIT $limit`
+		if incoming {
+			query = `MATCH (a:IP)-[:NEXT_HOP]->(b:IP)
+WHERE id(b) IN $frontier
+RETURN DISTINCT id(a) AS id LIMIT $limit`
+		}
+		rows, err := s.rows(ctx, query, map[string]any{"frontier": frontier, "limit": f.NodeLimit + 1})
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]int64, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, asInt(row["id"]))
+		}
+		return ids, nil
+	}
+
+	for depth := 1; depth <= f.MaxDepth && (len(upFrontier) > 0 || len(downFrontier) > 0); depth++ {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		upIDs, err := neighborIDs(upFrontier, true)
+		if err != nil {
+			return out, fmt.Errorf("traverse incoming route graph at depth %d: %w", depth, err)
+		}
+		downIDs, err := neighborIDs(downFrontier, false)
+		if err != nil {
+			return out, fmt.Errorf("traverse outgoing route graph at depth %d: %w", depth, err)
+		}
+		upFrontier = nil
+		downFrontier = nil
+		maxLen := len(upIDs)
+		if len(downIDs) > maxLen {
+			maxLen = len(downIDs)
+		}
+		// Alternate additions so a broad side cannot starve the other side of
+		// the shared node budget.
+		for i := 0; i < maxLen; i++ {
+			if i < len(upIDs) {
+				id := upIDs[i]
+				if !upSeen[id] {
+					v, exists := info[id]
+					if !exists && len(info) >= f.NodeLimit {
+						limited = true
+					} else {
+						upSeen[id] = true
+						v.upDepth = depth
+						info[id] = v
+						upFrontier = append(upFrontier, id)
+					}
+				}
+			}
+			if i < len(downIDs) {
+				id := downIDs[i]
+				if !downSeen[id] {
+					v, exists := info[id]
+					if !exists && len(info) >= f.NodeLimit {
+						limited = true
+					} else {
+						downSeen[id] = true
+						v.downDepth = depth
+						info[id] = v
+						downFrontier = append(downFrontier, id)
+					}
+				}
+			}
+		}
+		if limited {
+			break
+		}
+		if depth == f.MaxDepth && (len(upFrontier) > 0 || len(downFrontier) > 0) {
+			reachedDepth = true
+		}
+	}
+
+	ids := make([]any, 0, len(info))
+	for id := range info {
+		ids = append(ids, id)
+	}
+	nodeRows, err := s.rows(ctx, `
+MATCH (n:IP) WHERE id(n) IN $ids
+OPTIONAL MATCH (n)-[:IN_AS]->(as:AS)
+RETURN id(n) AS id, n.addr AS addr, coalesce(as.asn, n.asn) AS asn,
+       as.org AS org, n.last_seen AS last_seen
+ORDER BY n.addr`, map[string]any{"ids": ids})
+	if err != nil {
+		return out, fmt.Errorf("load route graph nodes: %w", err)
+	}
+	for _, row := range nodeRows {
+		id := asInt(row["id"])
+		v := info[id]
+		role := "both"
+		depth := v.upDepth
+		switch {
+		case id == seedID:
+			role = "seed"
+			depth = 0
+		case v.upDepth > 0 && v.downDepth == 0:
+			role = "upstream"
+		case v.downDepth > 0 && v.upDepth == 0:
+			role = "downstream"
+			depth = v.downDepth
+		case v.downDepth > 0 && (depth == 0 || v.downDepth < depth):
+			depth = v.downDepth
+		}
+		asn := asInt(row["asn"])
+		out.Nodes = append(out.Nodes, GraphNode{
+			ID: asString(row["addr"]), Label: asString(row["addr"]), Kind: "ip",
+			ASN: ptrIf(asn, int64(0)), Org: asString(row["org"]),
+			TraversalRole: role, Depth: depth, LastSeen: asInt(row["last_seen"]),
+		})
+	}
+
+	const edgeLimit = 10_000
+	edgeRows, err := s.rows(ctx, `
+MATCH (a:IP)-[e:NEXT_HOP]->(b:IP)
+WHERE id(a) IN $ids AND id(b) IN $ids
+RETURN a.addr AS f, b.addr AS t, e.last_rtt_ms AS rtt,
+       e.seen_count AS sc, e.last_seen AS last_seen
+ORDER BY e.last_seen DESC LIMIT $limit`, map[string]any{"ids": ids, "limit": edgeLimit + 1})
+	if err != nil {
+		return out, fmt.Errorf("load route graph edges: %w", err)
+	}
+	if len(edgeRows) > edgeLimit {
+		edgeRows = edgeRows[:edgeLimit]
+		out.TruncationReason = "edge limit reached"
+	}
+	for _, row := range edgeRows {
+		out.Edges = append(out.Edges, GraphEdge{
+			From: asString(row["f"]), To: asString(row["t"]), Kind: "next_hop",
+			LastRttMs: asFloat(row["rtt"]), SeenCount: asInt(row["sc"]),
+			LastSeen: asInt(row["last_seen"]),
+		})
+	}
+	if limited {
+		out.TruncationReason = "node limit reached"
+	} else if reachedDepth {
+		out.TruncationReason = "depth limit reached"
+	}
+	out.Complete = out.TruncationReason == ""
+	return out, nil
+}
+
 // nearbyHops returns NEXT_HOP edges on either side of addr (the union of in/out).
 func (s *Store) nearbyHops(ctx context.Context, addr string, limit int) ([]HotHop, error) {
 	limit = clampLimit(limit, 20, 200)

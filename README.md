@@ -194,6 +194,7 @@ GET /api/asn/{asn}/probes|targets|transit
 GET /api/probes | /api/probe/{id}
 GET /api/targets | /api/target/{addr}
 GET /api/ip/{addr}                         # IP node + incident NEXT_HOP edges
+GET /api/ip/{addr}/graph?max_depth=&node_limit= # directed upstream/downstream route graph
 GET /api/hops/hotspots?min_rtt=100         # transit hotspot edges
 GET /api/transit | /api/transit/{a}/{b}    # AS→AS transit edges + pair detail
 GET /api/transit/{a}/{b}/series             # pair-scoped historical loss + RTT cohort
