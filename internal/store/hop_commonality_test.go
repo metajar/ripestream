@@ -9,15 +9,15 @@ import (
 	"time"
 )
 
-func TestBuildHopCommonalityQueryIsBoundedAndExcludesDestination(t *testing.T) {
-	q := buildHopCommonalityQuery("ripestream", "atlas_results", 100, 200, 300, 3, 40)
+func TestBuildHopCommonalityQueryIsBoundedAndUsesTypedHops(t *testing.T) {
+	q := buildHopCommonalityQuery("ripestream", "atlas_results_traceroute_hops", 100, 200, 300, 3, 40)
 	for _, want := range []string{
 		"recent_candidates AS",
+		"FROM ripestream.atlas_results_traceroute_hops",
 		"timestamp >= toDateTime(200)",
 		"timestamp >= toDateTime(100)",
 		"timestamp < toDateTime(300)",
 		"cityHash64(msm_id, prb_id, timestamp) % 4 = 0",
-		"addr != dst_addr",
 		"addr IN (SELECT addr FROM recent_candidates)",
 		"HAVING probes >= 3",
 		"baseline_samples >= 12",
@@ -29,6 +29,11 @@ func TestBuildHopCommonalityQueryIsBoundedAndExcludesDestination(t *testing.T) {
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"result_json", "JSONExtract", "arrayJoin"} {
+		if strings.Contains(q, unwanted) {
+			t.Errorf("query unexpectedly parses raw JSON with %q", unwanted)
 		}
 	}
 }

@@ -25,13 +25,21 @@ last_updated: 2026-07-17
 
 ## Decision Log
 
+### Extract traceroute hop observations at ingestion for route correlation
+**Date:** 2026-07-17
+**Status:** Active
+**Decision:** Maintain a typed `atlas_results_traceroute_hops` table through a ClickHouse materialized view, backfill the maximum correlation window once during schema startup, and run route-correlation reads against that table.
+**Reasoning:** Expanding both nested traceroute JSON arrays across every recent and sampled-baseline read exceeded the API's 20-second query deadline. The ClickHouse broken-pipe errors were a consequence of the Go client cancelling those queries, not an independent network fault. Typed columns move JSON parsing to the one-time ingestion path and preserve the existing detection semantics.
+**Alternatives considered:** Raise the API timeout (rejected — it retains repeated CPU-heavy scans and worsens concurrent load), sample the recent incident window (rejected — it weakens probe agreement evidence), or reduce the baseline below 24 hours (rejected — it changes detection semantics).
+**Consequences:** ClickHouse stores a compact typed row per responsive non-destination traceroute reply, schema startup may perform one bounded 31-hour backfill after upgrade, the historical baseline remains deterministically sampled, and the correlation UI disables automatic failure retries to avoid doubling expensive work.
+
 ### Treat correlated hop RTT shifts as investigation evidence, not fault proof
 **Date:** 2026-07-16
 **Status:** Active
 **Decision:** Detect shared-fate candidates from route-level ClickHouse history using per-hop baselines and multi-probe agreement, enrich them from FalkorDB, and explicitly label the result as an investigation lead.
 **Reasoning:** The live graph merges paths globally and cannot preserve which probe-target trace traversed a hop, while router ICMP response latency can change without affecting forwarded traffic. Route-level history establishes commonality, but responsible attribution still requires endpoint and adjacent-hop evidence.
 **Alternatives considered:** Rank only the latest `NEXT_HOP.last_rtt_ms` values (rejected — no route cohort or baseline), declare the highest-latency hop the cause (rejected — ICMP de-prioritization makes that unsafe), or omit hop-level correlation entirely (rejected — it leaves valuable shared-fate evidence unused).
-**Consequences:** Candidates require a 15 ms and 35% median RTT regression, historical samples, and at least two configurable agreeing probes; destination replies are excluded, results are bounded, and the UI carries a causality caveat. To keep raw traceroute JSON expansion within the API deadline, the recent window is exact while the baseline uses a stable one-quarter hash sample; only recently corroborated hops receive historical aggregate state.
+**Consequences:** Candidates require a 15 ms and 35% median RTT regression, historical samples, and at least two configurable agreeing probes; destination replies are excluded, results are bounded, and the UI carries a causality caveat. The recent window is exact while the baseline uses a stable one-quarter hash sample; only recently corroborated hops receive historical aggregate state. Raw traceroute JSON expansion at read time was superseded by ingest-time typed hop extraction on 2026-07-17.
 
 ### Bound FalkorDB as live state and require consensus for broad incidents
 **Date:** 2026-07-16

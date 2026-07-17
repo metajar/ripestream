@@ -21,7 +21,7 @@ Read `internal/store/query.go` for the client deadline, `main.go` for the HTTP s
 
 ## Steps
 1. Confirm whether the failure is the Go query deadline, HTTP write deadline, or a ClickHouse memory exception.
-2. Reduce rows before JSON expansion and reduce grouping keys before historical aggregation. For recent-vs-baseline detection, select candidates from the exact recent window first.
+2. Reduce rows before JSON expansion and reduce grouping keys before historical aggregation. For recurring reads over nested payloads, extract the required fields into a typed table at ingestion. For recent-vs-baseline detection, select candidates from the exact recent window first.
 3. Use deterministic hash sampling for large baselines when approximate aggregates are already acceptable; never sample the incident window.
 4. Prefer approximate distinct functions and bounded arrays. Add external group/sort spill thresholds for large aggregations.
 5. Keep time, result, thread, and block-size bounds explicit in the generated SQL.
@@ -31,6 +31,8 @@ Read `internal/store/query.go` for the client deadline, `main.go` for the HTTP s
 - `url.URL.Query().Get` is already decoded; tests must not call `url.QueryUnescape` on it again. Literal SQL modulus operators expose this bug.
 - Baseline sampling changes `baseline_samples` to the sampled count. Minimum-sample gates must apply after sampling.
 - Raw nested traceroute JSON costs CPU even when aggregate memory is bounded. If candidate filtering and sampling are insufficient, add a typed hop-observation table rather than continuing to raise limits.
+- ClickHouse materialized views only process new inserts. Existing installations need a bounded, idempotently guarded backfill that covers the maximum query window, and its extraction SQL must stay identical to the view.
+- Multiple `arrayJoin` function calls produce a Cartesian product. Expand array indexes once and use `arrayElement` to retain aligned hop/reply positions.
 
 ## Verify
 - Assert recent and baseline time bounds, candidate filtering, sampling, spill settings, and the final result limit in query-builder tests.

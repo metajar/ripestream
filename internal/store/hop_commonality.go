@@ -41,7 +41,7 @@ type HopCommonality struct {
 	LastSeen            int64    `json:"last_seen"`
 }
 
-// HopCommonalities reconstructs responsive traceroute hops from raw Atlas JSON
+// HopCommonalities reads responsive traceroute replies extracted at ingestion
 // and compares each hop's recent median RTT with its own preceding baseline.
 // Destination replies are excluded so candidates represent shared transit
 // infrastructure rather than simply repeating a slow endpoint.
@@ -73,7 +73,7 @@ func (s *Store) HopCommonalities(ctx context.Context, now time.Time, f HopCommon
 
 	recentStart := now.Add(-f.Recent).Unix()
 	baselineStart := now.Add(-f.Recent - f.Baseline).Unix()
-	q := buildHopCommonalityQuery(s.db, s.table, baselineStart, recentStart, now.Unix(), f.MinProbes, f.Limit)
+	q := buildHopCommonalityQuery(s.db, s.table+"_traceroute_hops", baselineStart, recentStart, now.Unix(), f.MinProbes, f.Limit)
 	rows, err := s.QueryJSON(ctx, q)
 	if err != nil {
 		return nil, err
@@ -94,54 +94,27 @@ func (s *Store) HopCommonalities(ctx context.Context, now time.Time, f HopCommon
 	return out, nil
 }
 
-func buildHopCommonalityQuery(db, table string, baselineStart, recentStart, end int64, minProbes, limit int) string {
+func buildHopCommonalityQuery(db, hopTable string, baselineStart, recentStart, end int64, minProbes, limit int) string {
 	return fmt.Sprintf(`
-WITH recent_hop_rows AS
-(
-    SELECT timestamp, prb_id, dst_addr,
-           arrayJoin(JSONExtractArrayRaw(result_json, 'result')) AS hop_json
-    FROM %s.%s
-    PREWHERE type = 'traceroute'
-      AND timestamp >= toDateTime(%d)
-      AND timestamp < toDateTime(%d)
-),
-recent_observations AS
-(
-    SELECT timestamp, prb_id, dst_addr,
-           JSONExtractString(reply_json, 'from') AS addr,
-           JSONExtractFloat(reply_json, 'rtt') AS rtt
-    FROM recent_hop_rows
-    ARRAY JOIN JSONExtractArrayRaw(hop_json, 'result') AS reply_json
-    WHERE addr != '' AND addr != dst_addr AND rtt > 0 AND rtt < 10000
-),
-recent_candidates AS
+WITH recent_candidates AS
 (
     SELECT addr
-    FROM recent_observations
+    FROM %s.%s
+    PREWHERE timestamp >= toDateTime(%d)
+      AND timestamp < toDateTime(%d)
     GROUP BY addr
     HAVING uniqCombined64(prb_id) >= %d
        AND count() >= greatest(6, uniqCombined64(prb_id) * 2)
        AND quantileTDigest(0.5)(rtt) >= 15
 ),
-hop_rows AS
-(
-    SELECT timestamp, msm_id, prb_id, dst_addr,
-           arrayJoin(JSONExtractArrayRaw(result_json, 'result')) AS hop_json
-    FROM %s.%s
-    PREWHERE type = 'traceroute'
-      AND timestamp >= toDateTime(%d)
-      AND timestamp < toDateTime(%d)
-    WHERE timestamp >= toDateTime(%d)
-       OR cityHash64(msm_id, prb_id, timestamp) %% %d = 0
-),
 observations AS
 (
-    SELECT timestamp, msm_id, prb_id, dst_addr,
-           JSONExtractString(reply_json, 'from') AS addr,
-           JSONExtractFloat(reply_json, 'rtt') AS rtt
-	FROM hop_rows
-	ARRAY JOIN JSONExtractArrayRaw(hop_json, 'result') AS reply_json
-	WHERE addr != '' AND addr != dst_addr AND rtt > 0 AND rtt < 10000
+    SELECT timestamp, msm_id, prb_id, dst_addr, addr, rtt
+	FROM %s.%s
+	PREWHERE timestamp >= toDateTime(%d)
+      AND timestamp < toDateTime(%d)
+	WHERE (timestamp >= toDateTime(%d)
+       OR cityHash64(msm_id, prb_id, timestamp) %% %d = 0)
       AND addr IN (SELECT addr FROM recent_candidates)
 )
 SELECT addr,
@@ -173,8 +146,8 @@ SETTINGS max_threads = 2,
          max_block_size = 2048,
          max_bytes_before_external_group_by = 268435456,
          max_bytes_before_external_sort = 67108864`,
-		db, table, recentStart, end, minProbes,
-		db, table, baselineStart, end, recentStart, hopBaselineSampleDivisor,
+		db, hopTable, recentStart, end, minProbes,
+		db, hopTable, baselineStart, end, recentStart, hopBaselineSampleDivisor,
 		recentStart, recentStart, recentStart, recentStart, recentStart, recentStart,
 		recentStart, recentStart, recentStart, recentStart, recentStart,
 		minProbes, limit)

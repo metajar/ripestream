@@ -17,6 +17,8 @@ export function RouteCorrelationPage() {
   const query = useQuery({
     queryKey: ["hop-commonality", range, minProbes],
     queryFn: () => api.hopCommonalities(range, minProbes),
+    retry: false,
+    refetchInterval: 60_000,
   });
   const candidates = query.data?.candidates ?? [];
   const selected = candidates.find((hop) => hop.addr === selectedAddr) ?? candidates[0];

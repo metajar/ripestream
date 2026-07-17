@@ -36,7 +36,7 @@ Parallel errgroup runs HTTP API server with embedded React UI, alerting evaluato
 - **internal/alert** — Alerting engine with SQLite store, evaluator that ticks on interval, manager for API CRUD. Rule definitions evaluate against live graph state.
 - **internal/api** — HTTP API server serving /api/* routes. Reads from graph.Reader and store.Reader. Returns 503 when dependencies unavailable (graph disabled, alerting disabled). Caches expensive overview queries.
 - Transit relationship details combine FalkorDB's current endpoint test cohort and boundary hops with ClickHouse's historical, packet-weighted loss and RTT series for that cohort.
-- Route correlation reconstructs responsive hops from ClickHouse traceroute JSON, first selects multi-probe candidates from the exact recent window, then compares them with a deterministic one-quarter sample of the preceding baseline. Aggregation and sorting can spill at bounded thresholds before the result is enriched with live FalkorDB ASN identity and graph degree.
+- Route correlation reads responsive replies from a typed ClickHouse hop table populated by a materialized view at traceroute ingestion. Startup performs a guarded 31-hour backfill for existing installations. The query first selects multi-probe candidates from the exact recent window, then compares them with a deterministic one-quarter sample of the preceding baseline. Aggregation and sorting can spill at bounded thresholds before the result is enriched with live FalkorDB ASN identity and graph degree.
 - **internal/web** — Embedded React UI via go:embed. Served at / (API at /api/*). Production build via `go build` includes dist files.
 
 ## External Dependencies
