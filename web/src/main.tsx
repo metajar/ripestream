@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider, keepPreviousData } from "@tanstack/react-query";
 import { StrictMode, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, isRouteErrorResponse, RouterProvider, useRouteError } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { FEATURES } from "@/lib/features";
+import { IPRouteGraphPage } from "@/pages/IPRouteGraphPage";
 import "@/index.css";
 
 const queryClient = new QueryClient({
@@ -33,7 +34,10 @@ const router = createBrowserRouter([
       { path: "targets", lazy: route(() => import("@/pages/TargetsPage"), "TargetsPage") },
       { path: "target/:addr", lazy: route(() => import("@/pages/TargetDetailPage"), "TargetDetailPage") },
       { path: "ip/:addr", lazy: route(() => import("@/pages/IPDetailPage"), "IPDetailPage") },
-      { path: "ip/:addr/graph", lazy: route(() => import("@/pages/IPRouteGraphPage"), "IPRouteGraphPage") },
+      // Keep this route eager: operators commonly open graph deep links in a
+      // fresh tab, and the page shell is small. The heavy force-graph library
+      // remains lazy-loaded by IPRouteGraphPage itself.
+      { path: "ip/:addr/graph", element: <IPRouteGraphPage /> },
       { path: "transit", lazy: route(() => import("@/pages/TransitPage"), "TransitPage") },
       { path: "correlation", lazy: route(() => import("@/pages/RouteCorrelationPage"), "RouteCorrelationPage") },
       { path: "transit/:asnA/:asnB", lazy: route(() => import("@/pages/TransitPairDetailPage"), "TransitPairDetailPage") },
@@ -60,19 +64,34 @@ function route(load: () => Promise<unknown>, name: string) {
 // errors and unmatched routes (404), showing a graceful message with a link
 // back to safety instead of the raw "Unexpected Application Error!" dev screen.
 function RouteError() {
+  const error = useRouteError();
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
       <div className="text-2xl">🤔</div>
-      <h1 className="text-lg font-semibold text-text-primary">Page not found</h1>
+      <h1 className="text-lg font-semibold text-text-primary">{notFound ? "Page not found" : "Page couldn't be loaded"}</h1>
       <p className="max-w-md text-sm text-text-quaternary">
-        This page doesn't exist or couldn't be loaded. The link may be broken or the route may have changed.
+        {notFound
+          ? "This page doesn't exist. The link may be broken or the route may have changed."
+          : "The application hit an unexpected error while loading this page. Reload to use the latest deployed assets."}
       </p>
-      <a
-        href="/"
-        className="mt-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
-      >
-        Back to Network health
-      </a>
+      <div className="mt-2 flex gap-2">
+        {!notFound && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+          >
+            Reload application
+          </button>
+        )}
+        <a
+          href="/"
+          className="rounded-lg border border-border-primary px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-tertiary"
+        >
+          Back to Network health
+        </a>
+      </div>
     </div>
   );
 }

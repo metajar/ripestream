@@ -17,7 +17,7 @@ edges:
     condition: when the endpoint needs to query the FalkorDB graph
   - target: context/alerts.md
     condition: when the endpoint needs to serve alert data
-last_updated: 2025-01-16
+last_updated: 2026-07-17
 ---
 
 # Add API Endpoint
@@ -132,6 +132,8 @@ Add link in `web/src/components/AppShell.tsx` navigation if needed.
 - **Error responses**: Use `respond.Error()` from `internal/api/respond.go`, never manual status codes
 - **Query keys**: React Query keys should be stable and include parameters (e.g., `["myfeature", id]`)
 - **503 handling**: Handlers should return 503 when graph.Reader is nil (graph disabled), use `respond.Unavailable()`
+- **Deployment-safe deep links**: Keep small, operationally important page shells eager when users commonly open them directly in fresh tabs. Lazy-load the heavy visualization/library inside the page instead; this avoids a new-index/old-chunk deployment race while preserving bundle splitting.
+- **Error boundaries**: Distinguish a real router 404 from a lazy-module or render failure. Runtime failures should offer a reload action so the browser can pick up the latest deployed asset set.
 - **Context cancellation**: Always pass `r.Context()` to read operations
 
 ## Verify
