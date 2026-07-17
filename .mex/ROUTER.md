@@ -55,6 +55,7 @@ Then read this file fully before doing anything else in this session.
 - Route Correlation page detecting shared-hop RTT regressions across independent traceroutes against a 24-hour baseline, with live ASN and topology context
 - Server-paginated, server-filtered AS, probe, transit, and hop worklists with stable ordering, including complete Probe→Targets, Target→Probes, and IP incoming/outgoing hop relationships; paged probe lists do not poll while open
 - Networking-themed RJ45/Cat5e loading spinner shared via `LoadingState` / `FetchingOverlay`; paginated worklists overlay it on query-key changes without blanking prior rows
+- Live sidebar ingestion telemetry showing a five-second-smoothed tests/second rate, a 60-second sparkline, and total RIPE Atlas results read since process start
 
 **Not yet built:**
 - Email or external notification delivery (alerts are in-UI only)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ripestream/internal/graph"
+	"ripestream/internal/pipeline"
 	"ripestream/internal/store"
 )
 
@@ -26,11 +27,17 @@ type Alerter interface {
 	DeleteRule(ctx context.Context, id int64) error
 }
 
+// IngestionReader supplies the in-memory stream rate used by the sidebar.
+type IngestionReader interface {
+	Snapshot() pipeline.IngestionSnapshot
+}
+
 // Server holds the read-side dependencies wired by main and serves /api/*.
 type Server struct {
 	graph   graph.Reader
 	ch      store.Reader
 	alerter Alerter
+	ingest  IngestionReader
 	mux     *http.ServeMux
 
 	// overviewCache serves the /api/overview result from memory; a background
@@ -40,15 +47,15 @@ type Server struct {
 	overviewTTL   time.Duration
 }
 
-// New builds a Server with the given dependencies. alerter may be nil during
-// Phase 1 (the alerts routes are registered but return 503 until wired).
+// New builds a Server with the given dependencies. alerter and ingest may be
+// nil (their routes remain registered and return 503 until wired).
 // overviewTTL is the refresh interval for the cached overview; if the graph
 // reader is nil the cache is skipped and /api/overview returns 503.
-func New(g graph.Reader, ch store.Reader, alerter Alerter, overviewTTL time.Duration) *Server {
+func New(g graph.Reader, ch store.Reader, alerter Alerter, ingest IngestionReader, overviewTTL time.Duration) *Server {
 	if overviewTTL <= 0 {
 		overviewTTL = 60 * time.Second
 	}
-	s := &Server{graph: g, ch: ch, alerter: alerter, overviewTTL: overviewTTL}
+	s := &Server{graph: g, ch: ch, alerter: alerter, ingest: ingest, overviewTTL: overviewTTL}
 	s.mux = http.NewServeMux()
 	s.register()
 	// Only cache when there's a graph to read from.
@@ -109,6 +116,7 @@ func (s *Server) register() {
 	// Health / meta
 	m.HandleFunc("GET /api/health", s.health)
 	m.HandleFunc("GET /api/schema", s.schema)
+	m.HandleFunc("GET /api/ingestion", s.ingestion)
 
 	// Overview (UC1)
 	m.HandleFunc("GET /api/overview", s.overview)

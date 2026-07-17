@@ -15,6 +15,12 @@ import (
 // slow consumer cannot stall the firehose. The out channels are closed when
 // in is closed or ctx is cancelled.
 func Tee(ctx context.Context, in <-chan atlas.Record, outs ...chan<- atlas.Record) {
+	TeeObserved(ctx, in, nil, outs...)
+}
+
+// TeeObserved behaves like Tee and calls observe once for every result read
+// from the input stream, before attempting delivery to individual sinks.
+func TeeObserved(ctx context.Context, in <-chan atlas.Record, observe func(), outs ...chan<- atlas.Record) {
 	var dropped atomic.Uint64
 	go func() {
 		defer func() {
@@ -32,6 +38,9 @@ func Tee(ctx context.Context, in <-chan atlas.Record, outs ...chan<- atlas.Recor
 			case r, ok := <-in:
 				if !ok {
 					return
+				}
+				if observe != nil {
+					observe()
 				}
 				for _, out := range outs {
 					select {

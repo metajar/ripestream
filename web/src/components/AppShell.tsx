@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { GlobalSearch } from "@/components/GlobalSearch";
+import { IngestionRate } from "@/components/IngestionRate";
 import { FEATURES } from "@/lib/features";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +94,7 @@ export function AppShell() {
             </div>
           ))}
         </nav>
+        <IngestionRate />
         <div className="border-t border-border-primary px-5 py-3 text-[11px] text-text-quaternary">
           Data: RIPE Atlas · FalkorDB · ClickHouse
         </div>

@@ -152,6 +152,7 @@ func main() {
 		"batch_size", *batchSize, "flush_interval", *flushInterval)
 
 	records := atlas.Subscribe(ctx, params, opts)
+	ingestion := pipeline.NewIngestionMeter()
 
 	chIn := make(chan atlas.Record, 8192)
 	outs := []chan<- atlas.Record{chIn}
@@ -160,7 +161,7 @@ func main() {
 		graphIn = make(chan atlas.Record, 8192)
 		outs = append(outs, graphIn)
 	}
-	pipeline.Tee(ctx, records, outs...)
+	pipeline.TeeObserved(ctx, records, ingestion.Observe, outs...)
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -214,7 +215,7 @@ func main() {
 			slog.Info("alerting enabled", "db", *dbPath, "interval", *alertInterval)
 		}
 
-		startHTTP(gctx, g, *httpAddr, *uiEnabled, graphReader, chReader, alerter, *overviewRefresh)
+		startHTTP(gctx, g, *httpAddr, *uiEnabled, graphReader, chReader, alerter, ingestion, *overviewRefresh)
 	}
 
 	if err := g.Wait(); err != nil && err != context.Canceled {
@@ -226,8 +227,8 @@ func main() {
 
 // startHTTP builds the API server, optionally mounts the embedded UI at /, and
 // runs it in the errgroup. graphReader/alerter may be nil (endpoints return 503).
-func startHTTP(ctx context.Context, g *errgroup.Group, addr string, uiEnabled bool, gr graph.Reader, ch store.Reader, alerter api.Alerter, overviewTTL time.Duration) {
-	srv := api.New(gr, ch, alerter, overviewTTL)
+func startHTTP(ctx context.Context, g *errgroup.Group, addr string, uiEnabled bool, gr graph.Reader, ch store.Reader, alerter api.Alerter, ingestion api.IngestionReader, overviewTTL time.Duration) {
+	srv := api.New(gr, ch, alerter, ingestion, overviewTTL)
 	srv.StartCache(ctx) // background overview refresher; logs each refresh's duration
 	root := srv.Handler()
 	if uiEnabled {

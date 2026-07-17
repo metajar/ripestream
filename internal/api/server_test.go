@@ -9,8 +9,15 @@ import (
 	"time"
 
 	"ripestream/internal/graph"
+	"ripestream/internal/pipeline"
 	"ripestream/internal/store"
 )
+
+type testIngestionReader struct{}
+
+func (testIngestionReader) Snapshot() pipeline.IngestionSnapshot {
+	return pipeline.IngestionSnapshot{Total: 42, TestsPerSecond: 7, WindowSeconds: 60}
+}
 
 func TestWriteJSONNeverReturnsAnEmptyBodyOnEncodeFailure(t *testing.T) {
 	res := httptest.NewRecorder()
@@ -29,7 +36,7 @@ func TestWriteJSONNeverReturnsAnEmptyBodyOnEncodeFailure(t *testing.T) {
 }
 
 func TestGraphEndpointsDegradeWhenDisabled(t *testing.T) {
-	s := New(nil, nil, nil, time.Minute)
+	s := New(nil, nil, nil, nil, time.Minute)
 	for _, path := range []string{"/api/overview", "/api/issues", "/api/transit/1/2/series", "/api/hops/commonality", "/api/ip/192.0.2.1/graph"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		res := httptest.NewRecorder()
@@ -37,6 +44,26 @@ func TestGraphEndpointsDegradeWhenDisabled(t *testing.T) {
 		if res.Code != http.StatusServiceUnavailable {
 			t.Errorf("GET %s status = %d, want %d", path, res.Code, http.StatusServiceUnavailable)
 		}
+	}
+}
+
+func TestIngestionEndpoint(t *testing.T) {
+	s := New(nil, nil, nil, testIngestionReader{}, time.Minute)
+	req := httptest.NewRequest(http.MethodGet, "/api/ingestion", nil)
+	res := httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	var body struct {
+		Data pipeline.IngestionSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Data.Total != 42 || body.Data.TestsPerSecond != 7 {
+		t.Fatalf("data = %#v, want total 42 and rate 7", body.Data)
 	}
 }
 

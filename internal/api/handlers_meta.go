@@ -9,6 +9,15 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	respondOK(w, map[string]any{"status": "ok"})
 }
 
+// ingestion returns the last minute of stream reads from process memory.
+func (s *Server) ingestion(w http.ResponseWriter, r *http.Request) {
+	if s.ingest == nil {
+		respondError(w, http.StatusServiceUnavailable, "ingestion metrics are unavailable")
+		return
+	}
+	respondOK(w, s.ingest.Snapshot())
+}
+
 // schema describes the graph model so the UI can render field names/labels.
 func (s *Server) schema(w http.ResponseWriter, r *http.Request) {
 	respondOK(w, graphSchema)

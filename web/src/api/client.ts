@@ -64,6 +64,18 @@ export interface OverviewMeta {
   last_ok: boolean;
 }
 
+export interface IngestionSample {
+  timestamp: number;
+  tests: number;
+}
+
+export interface IngestionSnapshot {
+  total: number;
+  tests_per_second: number;
+  window_seconds: number;
+  samples: IngestionSample[];
+}
+
 // ---- types ------------------------------------------------------------------
 
 export interface OverviewCounts {
@@ -401,6 +413,7 @@ export interface AlertRuleView {
 // ---- endpoint functions -----------------------------------------------------
 
 export const api = {
+  ingestion: () => get<IngestionSnapshot>("/api/ingestion"),
   overview: () => getWithMeta<Overview, OverviewMeta>("/api/overview"),
   asnIssues: (role: "src" | "dst", limit = 25, offset = 0, sort = "impact", order = "desc", minProbes = 2, query = "") => {
     const q = new URLSearchParams({
