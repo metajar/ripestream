@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -13,14 +12,20 @@ import (
 func TestBuildHopCommonalityQueryIsBoundedAndExcludesDestination(t *testing.T) {
 	q := buildHopCommonalityQuery("ripestream", "atlas_results", 100, 200, 300, 3, 40)
 	for _, want := range []string{
+		"recent_candidates AS",
+		"timestamp >= toDateTime(200)",
 		"timestamp >= toDateTime(100)",
 		"timestamp < toDateTime(300)",
+		"cityHash64(msm_id, prb_id, timestamp) % 4 = 0",
 		"addr != dst_addr",
+		"addr IN (SELECT addr FROM recent_candidates)",
 		"HAVING probes >= 3",
 		"baseline_samples >= 12",
 		"LIMIT 40",
 		"uniqCombined64If(prb_id",
-		"SETTINGS max_threads = 2, max_block_size = 2048",
+		"max_threads = 2",
+		"max_bytes_before_external_group_by = 268435456",
+		"max_bytes_before_external_sort = 67108864",
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q", want)
@@ -31,9 +36,9 @@ func TestBuildHopCommonalityQueryIsBoundedAndExcludesDestination(t *testing.T) {
 func TestHopCommonalitiesDecodesEvidence(t *testing.T) {
 	s := New(Config{BaseURL: "http://clickhouse.test"})
 	s.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		query, err := url.QueryUnescape(r.URL.Query().Get("query"))
-		if err != nil || !strings.Contains(query, "FORMAT JSON") {
-			t.Errorf("unexpected query: %q (%v)", query, err)
+		query := r.URL.Query().Get("query")
+		if !strings.Contains(query, "FORMAT JSON") {
+			t.Errorf("unexpected query: %q", query)
 		}
 		body := `{"data":[{"addr":"203.0.113.9","recent_rtt":91.2,"baseline_rtt":40.1,"delta_ms":51.1,"change_pct":127.4,"impact_score":250.3,"recent_samples":42,"baseline_samples":180,"probes":5,"targets":3,"traces":19,"affected_probes":[10,11,12],"affected_targets":["1.1.1.1","8.8.8.8"],"first_seen":"2026-07-16 12:00:00","last_seen":"2026-07-16 12:29:00"}]}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil

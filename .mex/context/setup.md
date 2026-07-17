@@ -17,7 +17,7 @@ edges:
     condition: when setting up FalkorDB or troubleshooting graph connectivity
   - target: context/alerts.md
     condition: when configuring alerting engine or SQLite database
-last_updated: 2026-07-16
+last_updated: 2026-07-17
 ---
 
 # Setup
@@ -30,11 +30,9 @@ last_updated: 2026-07-16
 
 ## First-time Setup
 1. `git clone <repo>` && `cd ripestream`
-2. `docker compose up -d` — starts ClickHouse (port 8123) and FalkorDB (ports 6379, 3000)
-3. `go build -o ripestream .` — builds the Go binary
-4. Download GeoLite2-ASN database: `mkdir -p geolite && curl -L https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb -o geolite/GeoLite2-ASN.mmdb` (optional, for ASN enrichment)
-5. `./ripestream --password ripestream` — starts firehose ingestion (requires --password for ClickHouse auth)
-6. Open http://localhost:8080 for the web UI (default HTTP addr :8080)
+2. `cp .env.example .env` and fill in the ClickHouse password plus private R2 credentials
+3. `docker compose up -d --build` — builds and starts Ripestream, ClickHouse, and FalkorDB
+4. Open http://localhost:8080 for the web UI; a local Cloudflare Tunnel should target this address
 
 ## Environment Variables
 - `RIPESTREAM_CLICKHOUSE` (default: http://localhost:8123) — ClickHouse HTTP base URL
@@ -55,8 +53,8 @@ last_updated: 2026-07-16
 - `RIPESTREAM_LOG_LEVEL` (default: info) — log level: debug|info|warn|error
 
 ## Common Commands
-- `docker compose up -d` — start ClickHouse + FalkorDB containers
-- `CLICKHOUSE_PASSWORD='<secret>' R2_ACCOUNT_ID='<id>' R2_ACCESS_KEY_ID='<key>' R2_SECRET_ACCESS_KEY='<secret>' R2_BUCKET='<bucket>' docker compose -f docker-compose.prod.yml up -d --build` — build and start the full production stack (dashboard on internal port 8080)
+- `docker compose up -d --build` — build and start the full stack, publishing the dashboard/API on host port 8080
+- `docker compose up -d clickhouse falkordb` — start only the databases for local binary development
 - `docker compose down` — stop containers
 - `go build -o ripestream .` — build Go binary
 - `./ripestream --password ripestream` — run with default settings (firehose to both sinks)
@@ -69,7 +67,7 @@ last_updated: 2026-07-16
 - `cd web && npm run build` — build UI for embedding
 
 ## Common Issues
-- **Dokploy deployment**: Select `docker-compose.prod.yml`, set the required `CLICKHOUSE_PASSWORD`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`, then route the domain to service `ripestream` on container port `8080`. No host port is bound; the dashboard and databases remain private except through Dokploy's domain proxy.
+- **Cloudflare Tunnel deployment**: Run the default Compose stack and route the tunnel to `http://localhost:8080`. Only the application port is published; ClickHouse and FalkorDB remain private to the Compose network.
 - **Production ASN download fails**: The R2 token needs Object Read access to the configured private bucket. Match `R2_JURISDICTION` to the bucket (`default`, `eu`, or `fedramp`) and set `R2_OBJECT_KEY` when the raw MMDB is not stored as `GeoLite2-ASN.mmdb`. An optional `GEOLITE_DB_SHA256` rejects a corrupt or unexpected object.
 - **ClickHouse connection refused**: Ensure Docker Compose is running (`docker compose ps`). Check ClickHouse container logs (`docker compose logs clickhouse`).
 - **FalkorDB timeout errors**: Increase ReadTimeout in `internal/graph/store.go` (currently 10s). Check FalkorDB container is healthy (`docker compose ps falkordb`).

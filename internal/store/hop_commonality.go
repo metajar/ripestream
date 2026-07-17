@@ -15,6 +15,11 @@ type HopCommonalityFilter struct {
 	Limit     int
 }
 
+// hopBaselineSampleDivisor bounds the expensive raw-JSON expansion in the
+// historical window. Hash sampling is deterministic, so repeated requests use
+// the same baseline population while the recent incident window remains exact.
+const hopBaselineSampleDivisor = 4
+
 // HopCommonality is one transit hop whose RTT changed at the same time across
 // otherwise independent traceroutes. It is evidence of shared fate, not proof
 // that the router itself caused an incident (ICMP replies may be deprioritized).
@@ -91,14 +96,43 @@ func (s *Store) HopCommonalities(ctx context.Context, now time.Time, f HopCommon
 
 func buildHopCommonalityQuery(db, table string, baselineStart, recentStart, end int64, minProbes, limit int) string {
 	return fmt.Sprintf(`
-WITH hop_rows AS
+WITH recent_hop_rows AS
+(
+    SELECT timestamp, prb_id, dst_addr,
+           arrayJoin(JSONExtractArrayRaw(result_json, 'result')) AS hop_json
+    FROM %s.%s
+    PREWHERE type = 'traceroute'
+      AND timestamp >= toDateTime(%d)
+      AND timestamp < toDateTime(%d)
+),
+recent_observations AS
+(
+    SELECT timestamp, prb_id, dst_addr,
+           JSONExtractString(reply_json, 'from') AS addr,
+           JSONExtractFloat(reply_json, 'rtt') AS rtt
+    FROM recent_hop_rows
+    ARRAY JOIN JSONExtractArrayRaw(hop_json, 'result') AS reply_json
+    WHERE addr != '' AND addr != dst_addr AND rtt > 0 AND rtt < 10000
+),
+recent_candidates AS
+(
+    SELECT addr
+    FROM recent_observations
+    GROUP BY addr
+    HAVING uniqCombined64(prb_id) >= %d
+       AND count() >= greatest(6, uniqCombined64(prb_id) * 2)
+       AND quantileTDigest(0.5)(rtt) >= 15
+),
+hop_rows AS
 (
     SELECT timestamp, msm_id, prb_id, dst_addr,
            arrayJoin(JSONExtractArrayRaw(result_json, 'result')) AS hop_json
     FROM %s.%s
-    WHERE type = 'traceroute'
+    PREWHERE type = 'traceroute'
       AND timestamp >= toDateTime(%d)
       AND timestamp < toDateTime(%d)
+    WHERE timestamp >= toDateTime(%d)
+       OR cityHash64(msm_id, prb_id, timestamp) %% %d = 0
 ),
 observations AS
 (
@@ -108,6 +142,7 @@ observations AS
 	FROM hop_rows
 	ARRAY JOIN JSONExtractArrayRaw(hop_json, 'result') AS reply_json
 	WHERE addr != '' AND addr != dst_addr AND rtt > 0 AND rtt < 10000
+      AND addr IN (SELECT addr FROM recent_candidates)
 )
 SELECT addr,
        round(quantileTDigestIf(0.5)(rtt, timestamp >= toDateTime(%d)), 1) AS recent_rtt,
@@ -134,7 +169,12 @@ HAVING probes >= %d
    AND recent_rtt >= baseline_rtt * 1.35
 ORDER BY impact_score DESC, probes DESC
 	LIMIT %d
-SETTINGS max_threads = 2, max_block_size = 2048`, db, table, baselineStart, end,
+SETTINGS max_threads = 2,
+         max_block_size = 2048,
+         max_bytes_before_external_group_by = 268435456,
+         max_bytes_before_external_sort = 67108864`,
+		db, table, recentStart, end, minProbes,
+		db, table, baselineStart, end, recentStart, hopBaselineSampleDivisor,
 		recentStart, recentStart, recentStart, recentStart, recentStart, recentStart,
 		recentStart, recentStart, recentStart, recentStart, recentStart,
 		minProbes, limit)

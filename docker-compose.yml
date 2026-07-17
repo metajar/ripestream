@@ -1,13 +1,63 @@
 services:
+  ripestream:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ripestream
+    environment:
+      RIPESTREAM_CLICKHOUSE: http://clickhouse:8123
+      RIPESTREAM_USER: ${CLICKHOUSE_USER:-default}
+      RIPESTREAM_PASSWORD: ${CLICKHOUSE_PASSWORD:-ripestream}
+      RIPESTREAM_DB: ${CLICKHOUSE_DB:-ripestream}
+      RIPESTREAM_FALKOR_ADDR: falkordb:6379
+      RIPESTREAM_FALKOR_GRAPH: ${FALKORDB_GRAPH:-ripestream}
+      RIPESTREAM_FALKOR_ENABLED: "true"
+      RIPESTREAM_HTTP_ADDR: :8080
+      RIPESTREAM_UI_ENABLED: "true"
+      RIPESTREAM_ALERT_ENABLED: "true"
+      RIPESTREAM_DB_PATH: /data/ripestream.db
+      RIPESTREAM_ASN_DB: /data/geolite/GeoLite2-ASN.mmdb
+      RIPESTREAM_LOG_LEVEL: ${RIPESTREAM_LOG_LEVEL:-info}
+      GEOLITE_DB_PATH: /data/geolite/GeoLite2-ASN.mmdb
+      GEOLITE_DB_SHA256: ${GEOLITE_DB_SHA256:-}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:?Set R2_ACCOUNT_ID in .env}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID in .env}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY in .env}
+      R2_BUCKET: ${R2_BUCKET:?Set R2_BUCKET in .env}
+      R2_OBJECT_KEY: ${R2_OBJECT_KEY:-GeoLite2-ASN.mmdb}
+      R2_JURISDICTION: ${R2_JURISDICTION:-default}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ripestream-data:/data
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 30s
+    restart: unless-stopped
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: ripestream-clickhouse
+    mem_limit: ${CLICKHOUSE_MEMORY_LIMIT:-8g}
     environment:
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ripestream
-    ports:
-      - "8123:8123"  # HTTP interface (what ripestream uses)
-      - "9000:9000"  # native protocol (clickhouse-client / ch-cli)
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-ripestream}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-ripestream}
+    expose:
+      - "8123"
     ulimits:
       nofile:
         soft: 262144
@@ -16,7 +66,7 @@ services:
       - clickhouse-data:/var/lib/clickhouse
       - clickhouse-logs:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      test: ["CMD-SHELL", "wget --spider -q --user=\"$${CLICKHOUSE_USER}\" --password=\"$${CLICKHOUSE_PASSWORD}\" http://localhost:8123/ping"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -25,9 +75,8 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     container_name: ripestream-falkordb
-    ports:
-      - "6379:6379"  # Redis protocol (falkordb-go)
-      - "3000:3000"  # FalkorDB Browser UI
+    expose:
+      - "6379"
     volumes:
       - falkordb-data:/var/lib/falkordb/data
     healthcheck:
@@ -38,6 +87,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  ripestream-data:
   clickhouse-data:
   clickhouse-logs:
   falkordb-data:

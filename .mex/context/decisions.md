@@ -12,7 +12,7 @@ edges:
     condition: when a decision relates to system structure
   - target: context/stack.md
     condition: when a decision relates to technology choice
-last_updated: 2026-07-16
+last_updated: 2026-07-17
 ---
 
 # Decisions
@@ -31,7 +31,7 @@ last_updated: 2026-07-16
 **Decision:** Detect shared-fate candidates from route-level ClickHouse history using per-hop baselines and multi-probe agreement, enrich them from FalkorDB, and explicitly label the result as an investigation lead.
 **Reasoning:** The live graph merges paths globally and cannot preserve which probe-target trace traversed a hop, while router ICMP response latency can change without affecting forwarded traffic. Route-level history establishes commonality, but responsible attribution still requires endpoint and adjacent-hop evidence.
 **Alternatives considered:** Rank only the latest `NEXT_HOP.last_rtt_ms` values (rejected — no route cohort or baseline), declare the highest-latency hop the cause (rejected — ICMP de-prioritization makes that unsafe), or omit hop-level correlation entirely (rejected — it leaves valuable shared-fate evidence unused).
-**Consequences:** Candidates require a 15 ms and 35% median RTT regression, historical samples, and at least two configurable agreeing probes; destination replies are excluded, results are bounded, and the UI carries a causality caveat.
+**Consequences:** Candidates require a 15 ms and 35% median RTT regression, historical samples, and at least two configurable agreeing probes; destination replies are excluded, results are bounded, and the UI carries a causality caveat. To keep raw traceroute JSON expansion within the API deadline, the recent window is exact while the baseline uses a stable one-quarter hash sample; only recently corroborated hops receive historical aggregate state.
 
 ### Bound FalkorDB as live state and require consensus for broad incidents
 **Date:** 2026-07-16

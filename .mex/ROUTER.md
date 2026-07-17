@@ -29,8 +29,8 @@ Then read this file fully before doing anything else in this session.
 
 ## Current Project State
 **Working:**
-- Memory-bounded production history queries using typed ClickHouse PING metrics and constrained route-correlation aggregation, with an env-configurable 8 GiB ClickHouse container limit
-- Dokploy production deployment with authenticated runtime GeoLite2-ASN download from private Cloudflare R2, the embedded dashboard proxied to internal port 8080 without a host binding, live ingestion, and persistent private ClickHouse/FalkorDB services
+- Memory-bounded production history queries using typed ClickHouse PING metrics and recent-candidate-prefiltered, deterministically sampled route correlation, with an env-configurable 8 GiB ClickHouse container limit
+- Direct Docker Compose server deployment with authenticated runtime GeoLite2-ASN download from private Cloudflare R2, the embedded dashboard published on host port 8080 for a Cloudflare Tunnel, live ingestion, and persistent private ClickHouse/FalkorDB services
 - RIPE Atlas stream ingestion with auto-reconnect and exponential backoff
 - ClickHouse batch writes with JSONEachRow format and retry logic
 - FalkorDB graph topology for traceroute paths and ping health

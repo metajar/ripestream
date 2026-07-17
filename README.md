@@ -56,15 +56,24 @@ Requires Go 1.21+ (uses `log/slog`, `embed`, `signal.NotifyContext`).
 
 ## Run
 
-Start local ClickHouse + FalkorDB:
+Copy the environment template, fill in the ClickHouse password and private R2
+credentials, then build and start the complete stack:
 
 ```bash
-docker compose up -d
+cp .env.example .env
+docker compose up -d --build
 ```
 
-Then:
+The embedded UI and API are published on host port `8080`, so a Cloudflare
+Tunnel can target `http://localhost:8080`. ClickHouse and FalkorDB are available
+only to services inside the Compose network.
+
+For development without the application container, start only the databases
+and run the Go binary locally:
 
 ```bash
+docker compose up -d clickhouse falkordb
+
 # firehose: ingest all public results into both sinks
 ./ripestream --password ripestream
 
@@ -79,41 +88,32 @@ ClickHouse schema is applied automatically (`--apply-schema`). FalkorDB indexes
 on `IP.addr`, `Probe.id`, and `AS.asn` are ensured on startup. Place
 `GeoLite2-ASN.mmdb` under `geolite/` (or pass `--asn-db`) for ASN enrichment.
 
-FalkorDB Browser UI (compose): http://localhost:3000
-
 FalkorDB is a bounded live-state store, not the historical archive: by default
 only the last 30 minutes contribute to health and a background janitor removes
 topology older than 6 hours in small batches. ClickHouse retains the full result
 history. On the first production start after upgrading, the janitor may take
 several intervals to drain a large stale backlog without blocking ingestion.
 
-## Dokploy production deployment
+## Docker Compose server deployment
 
-Use `docker-compose.prod.yml` as the Compose file in Dokploy and define a strong
-`CLICKHOUSE_PASSWORD` plus the private Cloudflare R2 credentials listed below in
-the Dokploy environment. The deployment builds the embedded React UI and Go
-service, downloads GeoLite2-ASN through R2's authenticated S3 API at container
-startup, runs the RIPE Atlas firehose ingestor, and starts private ClickHouse and
-FalkorDB services with persistent volumes.
+The default `docker-compose.yml` builds the embedded React UI and Go service,
+downloads GeoLite2-ASN through R2's authenticated S3 API at startup, and runs
+the application with persistent ClickHouse, FalkorDB, and SQLite data. Port
+`8080` is bound on the host; point the Cloudflare Tunnel at
+`http://localhost:8080` (or `http://SERVER_IP:8080` when the connector is on a
+different machine).
 
-The Ripestream UI/API listens on container port `8080` but does not bind a host
-port, avoiding conflicts with other Dokploy applications. In Dokploy's Domains
-tab, point the domain at service `ripestream` on container port `8080`.
-ClickHouse and FalkorDB are also intentionally not exposed on the host.
-
-To validate or run the production stack locally:
+Create the server environment file and start the stack:
 
 ```bash
-CLICKHOUSE_PASSWORD='replace-me' \
-R2_ACCOUNT_ID='your-cloudflare-account-id' \
-R2_ACCESS_KEY_ID='your-r2-access-key-id' \
-R2_SECRET_ACCESS_KEY='your-r2-secret-access-key' \
-R2_BUCKET='your-private-bucket' \
-docker compose -f docker-compose.prod.yml config
+cp .env.example .env
+# Edit .env before continuing.
+docker compose config
+docker compose up -d --build
 ```
 
 Upload the raw, uncompressed `GeoLite2-ASN.mmdb` file to the private R2 bucket,
-then configure these Dokploy variables:
+then configure these variables in `.env`:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -126,7 +126,7 @@ then configure these Dokploy variables:
 | `GEOLITE_DB_SHA256` | no | Expected SHA-256 checksum; startup fails on mismatch |
 | `CLICKHOUSE_MEMORY_LIMIT` | no | ClickHouse container memory limit; defaults to `8g` |
 
-Do not set the displayed Cloudflare API token value in Dokploy; the S3 client
+Do not set the displayed Cloudflare API token value; the S3 client
 uses only its generated Access Key ID and Secret Access Key. Scope the token to
 Object Read on this bucket. The entrypoint downloads to a temporary file,
 optionally verifies it, atomically replaces the copy under the persistent `/data`

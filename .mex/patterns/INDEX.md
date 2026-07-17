@@ -10,6 +10,7 @@ edges:
     condition: when starting a new session or needing context bootstrap
   - target: ../context/architecture.md
     condition: when understanding what components patterns might reference
+last_updated: 2026-07-17
 ---
 
 # Pattern Index
@@ -44,4 +45,5 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [debug-stream-ingestion.md](debug-stream-ingestion.md) | Diagnosing failures in the RIPE Atlas stream ingestion pipeline |
 | [manage-graph-retention.md](manage-graph-retention.md) | Changing FalkorDB retention, pruning, or live-health freshness semantics |
 | [manage-probe-metadata.md](manage-probe-metadata.md) | Changing RIPE Atlas probe inventory enrichment, caching, or filters |
+| [tune-clickhouse-history.md](tune-clickhouse-history.md) | Diagnosing or changing memory- and deadline-bounded ClickHouse history queries |
 | [tune-target-issues.md](tune-target-issues.md) | Changing target loss detection, probe consensus, or historical baseline rules |
