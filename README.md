@@ -96,9 +96,9 @@ service, downloads GeoLite2-ASN through R2's authenticated S3 API at container
 startup, runs the RIPE Atlas firehose ingestor, and starts private ClickHouse and
 FalkorDB services with persistent volumes.
 
-The Ripestream UI/API listens on container port `3000` but does not bind a host
+The Ripestream UI/API listens on container port `8080` but does not bind a host
 port, avoiding conflicts with other Dokploy applications. In Dokploy's Domains
-tab, point the domain at service `ripestream` on container port `3000`.
+tab, point the domain at service `ripestream` on container port `8080`.
 ClickHouse and FalkorDB are also intentionally not exposed on the host.
 
 To validate or run the production stack locally:

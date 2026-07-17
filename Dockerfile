@@ -36,6 +36,6 @@ COPY --chmod=755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.s
 USER ripestream
 WORKDIR /data
 
-EXPOSE 3000
+EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
