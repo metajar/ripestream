@@ -16,14 +16,14 @@ edges:
     condition: when working with FalkorDB-specific configuration and queries
   - target: context/alerts.md
     condition: when working with SQLite for alert state storage
-last_updated: 2025-01-16
+last_updated: 2026-07-17
 ---
 
 # Stack
 
 ## Core Technologies
 - **Go 1.25** — primary language for ingestion service. Uses log/slog, embed, signal.NotifyContext.
-- **ClickHouse 24.8** — time-series database for full atlas_results history. HTTP interface only (not native TCP).
+- **ClickHouse 24.8** — time-series database for a 24-hour rolling `atlas_results` history. HTTP interface only (not native TCP).
 - **FalkorDB** — graph database for live IP/ASN topology (runs on Redis protocol, port 6379). Browser UI at port 3000.
 - **React 19 + TypeScript** — frontend UI. Vite for dev/build, Tailwind CSS v4 for styling.
 - **Docker Compose** — local development stack (ClickHouse + FalkorDB containers).

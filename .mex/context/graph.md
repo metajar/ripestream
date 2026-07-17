@@ -84,6 +84,6 @@ FalkorDB requires range indexes for MERGE lookups:
 - **Idempotent MERGE**: Running the same MERGE twice is safe. Edge properties get updated, nodes get merged. No duplicates.
 - **Schema enforcement**: FalkorDB is schemaless for properties, but indexes must exist for MERGE performance.
 - **Graph size**: Live firehose creates millions of nodes/edges. Queries without proper filters can timeout. Always use index-backed filters.
-- **Retention**: `RunJanitor` removes stale observation edges and then orphan nodes in batches (6h default). Never use FalkorDB as the historical archive; query ClickHouse for history.
+- **Retention**: `RunJanitor` removes stale observation edges and then orphan nodes in batches (6h default). Never use FalkorDB as the historical archive; query ClickHouse for retained history.
 - **Freshness**: Health and alert queries use `Store.activeCutoff()` (30m default) so retained but stale observations do not appear current.
 - **Probe metadata cache**: use `metadata_checked_at` to pace missing/private IDs and `metadata_updated_at` only for usable inventory records; otherwise unavailable probes look falsely enriched and are retried too aggressively.

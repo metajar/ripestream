@@ -1,7 +1,7 @@
 # ripestream
 
 A small Go service that reads the **RIPE Atlas** live result stream and writes
-results into **ClickHouse** (full history) and **FalkorDB** (live topology graph).
+results into **ClickHouse** (24-hour history) and **FalkorDB** (live topology graph).
 
 By default it subscribes to the full public *firehose* — every measurement result
 RIPE Atlas publishes, across all measurement types (ping, traceroute, dns, http,
@@ -28,7 +28,7 @@ RIPE Atlas stream ──NDJSON──▶  ripestream ──tee──▶ ClickHous
 - **FalkorDB writer** (`internal/graph`): filters to traceroute + ping, extracts
   hop paths / RTT health, and batch-`MERGE`s nodes and edges into a hybrid IP/ASN
   graph.
-- **Schema** (`schema.sql`): ClickHouse envelope, typed PING metrics, and `result_json`, applied on startup.
+- **Schema** (`schema.sql`): ClickHouse envelope, typed PING metrics, and `result_json`, with a 24-hour TTL applied on startup.
 
 ## Graph model (FalkorDB)
 
@@ -314,8 +314,14 @@ CREATE TABLE ripestream.atlas_results (
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(timestamp)
-ORDER BY (type, msm_id, prb_id, timestamp);
+ORDER BY (type, msm_id, prb_id, timestamp)
+TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE;
 ```
+
+The raw results table and its typed traceroute-hop projection both expire rows
+24 hours after ingestion. ClickHouse applies TTL deletion asynchronously during
+background merges, so expired rows can remain briefly before their parts are
+rewritten or removed.
 
 ## Example queries
 

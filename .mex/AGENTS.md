@@ -1,13 +1,13 @@
 ---
 name: agents
 description: Always-loaded project anchor. Read this first. Contains project identity, non-negotiables, commands, and pointer to ROUTER.md for full context.
-last_updated: 2025-01-16
+last_updated: 2026-07-17
 ---
 
 # Ripestream
 
 ## What This Is
-A Go service that reads the RIPE Atlas live result stream and writes results into ClickHouse (full history) and FalkorDB (live topology graph).
+A Go service that reads the RIPE Atlas live result stream and writes a rolling 24-hour history into ClickHouse and a bounded live topology graph into FalkorDB.
 
 ## Non-Negotiables
 - Never block the firehose — sink channels must be buffered, never block on slow writes

@@ -25,6 +25,22 @@ last_updated: 2026-07-17
 
 ## Decision Log
 
+### Use a shorter retention horizon for the live graph
+**Date:** 2026-07-17
+**Status:** Active
+**Decision:** Retain ClickHouse measurements for 24 hours while pruning FalkorDB observations after 6 hours by default.
+**Reasoning:** ClickHouse needs enough rolling history for comparisons, while FalkorDB is only a live topology projection and benefits more from a smaller graph and faster aggregate queries.
+**Alternatives considered:** Give both stores a 24-hour horizon (rejected — it retains unnecessary graph state), or shorten ClickHouse to 6 hours as well (rejected — it removes useful historical context).
+**Consequences:** The two stores have intentionally different retention horizons; 30-minute health freshness remains independent of both.
+
+### Retain only 24 hours in ClickHouse and FalkorDB
+**Date:** 2026-07-17
+**Status:** Superseded for FalkorDB by the later 6-hour live-graph decision; the 24-hour ClickHouse TTL remains active
+**Decision:** Expire raw Atlas rows and typed traceroute-hop rows 24 hours after ingestion, and prune FalkorDB observations after 24 hours by default.
+**Reasoning:** The firehose produces enough data that unbounded ClickHouse history and graph growth are operationally unsafe; a shared rolling horizon keeps both stores bounded and predictable.
+**Alternatives considered:** Keep unbounded ClickHouse history (rejected — storage grows continuously), retain a shorter graph horizon than ClickHouse (rejected — the requested operational horizon is 24 hours for both), or rely on manual cleanup (rejected — it is easy to miss and does not protect unattended deployments).
+**Consequences:** ClickHouse TTL cleanup is asynchronous during background merges, existing tables receive the TTL through idempotent startup ALTER statements, and historical features only have the observations still available inside the rolling 24-hour ingestion window.
+
 ### Extract traceroute hop observations at ingestion for route correlation
 **Date:** 2026-07-17
 **Status:** Active
@@ -43,7 +59,7 @@ last_updated: 2026-07-17
 
 ### Bound FalkorDB as live state and require consensus for broad incidents
 **Date:** 2026-07-16
-**Status:** Active
+**Status:** Active; retention duration reaffirmed by the 2026-07-17 split-retention decision
 **Decision:** Keep full measurement history in ClickHouse, prune FalkorDB observations after 6 hours by default, use a 30-minute active-health window, and require multi-probe/multi-AS agreement for destination-wide incidents.
 **Reasoning:** An unbounded graph made old and unreliable probe results look current, degraded query latency, and allowed individual probes to dominate the incident view.
 **Alternatives considered:** Retain the full graph forever (rejected — unbounded operational growth), hide noisy results only in the UI (rejected — alerts and APIs would remain wrong), maintain a manual probe denylist (rejected — high maintenance and slow to adapt).

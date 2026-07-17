@@ -39,7 +39,14 @@ CREATE TABLE IF NOT EXISTS ripestream.atlas_results
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (type, msm_id, prb_id, timestamp)
+TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE
 SETTINGS index_granularity = 8192;
+
+-- CREATE TABLE IF NOT EXISTS does not update existing installations. Keep the
+-- retention migration explicit so applying the embedded schema also schedules
+-- deletion of rows that are already older than 24 hours.
+ALTER TABLE ripestream.atlas_results
+MODIFY TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE;
 
 -- Idempotent migration for databases created before typed PING metrics were
 -- introduced. Existing rows receive zero defaults; new ingestion fills them.
@@ -67,7 +74,11 @@ CREATE TABLE IF NOT EXISTS ripestream.atlas_results_traceroute_hops
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (timestamp, addr, prb_id, msm_id, hop_index, reply_index)
+TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE
 SETTINGS index_granularity = 8192;
+
+ALTER TABLE ripestream.atlas_results_traceroute_hops
+MODIFY TTL toDateTime(received_at) + INTERVAL 24 HOUR DELETE;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS ripestream.atlas_results_traceroute_hops_mv
 TO ripestream.atlas_results_traceroute_hops
@@ -93,10 +104,10 @@ FROM
 )
 WHERE addr != '' AND addr != dst_addr AND rtt > 0 AND rtt < 10000;
 
--- Existing installations need enough typed history for the maximum six-hour
--- recent window plus its preceding 24-hour baseline (with one hour of slack).
--- ApplySchema runs before ingestion starts. The scalar guard makes this a
--- one-time backfill and avoids duplicating rows on subsequent restarts.
+-- Existing installations receive as much typed history as remains inside the
+-- 24-hour retention window. ApplySchema runs before ingestion starts. The
+-- scalar guard makes this a one-time backfill and avoids duplicating rows on
+-- subsequent restarts.
 INSERT INTO ripestream.atlas_results_traceroute_hops
 SELECT received_at, timestamp, msm_id, prb_id, dst_addr,
        toUInt16(hop_index) AS hop_index,
