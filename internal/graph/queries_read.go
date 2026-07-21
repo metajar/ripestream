@@ -121,12 +121,26 @@ func (s *Store) ASNIssues(ctx context.Context, f ASNIssueFilter) ([]ASNIssue, er
 	if minProbes < 1 {
 		minProbes = 1
 	}
+	// Destination aggregates require cross-network agreement so a single noisy
+	// source AS cannot invent a destination-wide incident. Default to 2 when
+	// the caller does not set an explicit floor (0). Source-AS rankings keep 1.
 	minSourceASes := f.MinSourceASes
 	if minSourceASes < 1 {
-		minSourceASes = 1
+		if role == "dst" {
+			minSourceASes = 2
+		} else {
+			minSourceASes = 1
+		}
 	}
 	query := strings.ToLower(strings.TrimSpace(f.Query))
 
+	// Destination rankings used to pre-qualify every probe with a second full
+	// PING scan (noisy-probe suppression). On a populated firehose graph that
+	// double aggregation regularly exceeded FalkorDB's read timeout and the
+	// Cloudflare Tunnel returned a plain-text 502 — which the UI surfaces as
+	// "API returned invalid JSON". Cross-network MinSourceASes consensus is the
+	// cheaper, equivalent filter for AS-level worklists; per-probe quality
+	// filtering remains on the Targets() path where one bad probe hurts more.
 	var q string
 	if role == "src" {
 		q = `
@@ -156,11 +170,6 @@ RETURN asn, org, samples, round(100.0*avg_loss) AS avg_loss_pct,
 ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC, asn ASC SKIP $offset LIMIT $limit`
 	} else {
 		q = `
-MATCH (p:Probe)-[allPing:PING]->()
-WHERE allPing.sent > 0 AND allPing.last_seen >= $cutoff
-WITH p, count(allPing) AS probe_targets, sum(allPing.sent) AS probe_sent, sum(allPing.rcvd) AS probe_rcvd
-WITH p, probe_targets, (1.0 * (probe_sent - probe_rcvd) / probe_sent) AS probe_loss
-WHERE probe_targets < $qualityTargets OR probe_loss < $maxProbeLoss
 MATCH (p:Probe)-[e:PING]->(t:IP)-[:IN_AS]->(as:AS)
 WHERE e.sent > 0 AND e.last_seen >= $cutoff
 WITH as.asn AS asn, as.org AS org,
@@ -188,9 +197,8 @@ ORDER BY ` + sortExpr + ` ` + dir + `, samples DESC, asn ASC SKIP $offset LIMIT 
 	}
 	rows, err := s.rows(ctx, q, map[string]any{
 		"minLoss": f.MinLoss, "limit": f.Limit, "minProbes": minProbes, "offset": f.Offset,
-		"cutoff": s.activeCutoff(), "qualityTargets": 3, "maxProbeLoss": 0.8,
-		"minSourceASes": minSourceASes,
-		"query":         query,
+		"cutoff": s.activeCutoff(), "minSourceASes": minSourceASes,
+		"query":  query,
 	})
 	if err != nil {
 		return nil, err

@@ -86,10 +86,12 @@ var _ Reader = (*Store)(nil)
 // ---- Generic query-to-rows helper ------------------------------------------
 
 // readQueryTimeoutMS is deliberately above FalkorDB's one-second default.
-// Aggregate read queries over the live graph (notably the ASN worklist) need
-// a few seconds on a populated graph, but remain bounded so a UI request never
-// runs indefinitely.
-const readQueryTimeoutMS = 5_000
+// Aggregate read queries over the live graph (ASN/target worklists, overview)
+// need more than a few seconds on a populated firehose graph. Keep this below
+// the go-redis ReadTimeout so a slow query returns a Cypher error instead of
+// an abandoned socket, and below the HTTP WriteTimeout so handlers can still
+// encode a JSON error before the client disconnects.
+const readQueryTimeoutMS = 15_000
 
 // rows runs a parameterized, read-only Cypher query and yields one row at a
 // time as a column-name → value map. Values are the Go scalars FalkorDB's

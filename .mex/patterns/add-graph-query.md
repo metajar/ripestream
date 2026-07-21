@@ -18,7 +18,7 @@ edges:
     condition: when creating an API endpoint for the graph query
   - target: context/alerts.md
     condition: when the query is used for alert evaluation
-last_updated: 2025-01-16
+last_updated: 2026-07-21
 ---
 
 # Add Graph Query Feature
@@ -117,7 +117,7 @@ curl http://localhost:8080/api/myfeature/123
 ```
 
 ## Gotchas
-- **Read timeout**: Complex queries can take 2-4s. Ensure ReadTimeout >= 10s in `graph/store.go`
+- **Read timeout**: Complex aggregates can take several seconds. Ensure ReadTimeout (20s) is above `readQueryTimeoutMS` (15s) in `graph/store.go` / `graph/query.go`. Avoid double full-graph PING scans on worklist endpoints — they time out behind Cloudflare Tunnel as plain-text 502s.
 - **Indexes required**: MERGE requires indexes on Probe.id, IP.addr, AS.asn. Create via EnsureIndexes()
 - **Query limits**: Always LIMIT Cypher queries to prevent unbounded results
 - **Context cancellation**: Check ctx.Err() before long-running queries

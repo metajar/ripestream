@@ -142,7 +142,7 @@ func (s *Server) detectIssues(ctx context.Context) []Issue {
 				Evidence: []string{
 					fmt.Sprintf("%d probes across %d source ASes agree", a.Probes, a.SourceASes),
 					fmt.Sprintf("%.0f%% average, %.0f%% max loss across %d samples", a.AvgLossPct, a.MaxLossPct, a.Samples),
-					"Probes failing across most active targets are excluded from destination-wide detection",
+					"Destination-wide detection requires agreement from at least two source networks",
 				},
 				Source: "detected",
 			})

@@ -16,7 +16,7 @@ edges:
     condition: when working with the FalkorDB graph writer or topology model
   - target: context/alerts.md
     condition: when understanding how the alerting engine integrates with the ingestion pipeline
-last_updated: 2026-07-17
+last_updated: 2026-07-21
 ---
 
 # Architecture
@@ -59,6 +59,6 @@ Parallel errgroup runs HTTP API server with embedded React UI, alerting evaluato
 ## Live Health Semantics
 - ClickHouse retains 24 hours of ingested measurement history; FalkorDB is a bounded live-state projection with a shorter 6-hour default retention.
 - Only recent PING observations (30m default) contribute to overview health, issue detection, and alert evaluation.
-- Destination-wide incidents require agreement from at least three probes in at least two source ASes.
-- Probes failing at least 80% of packets across three or more active targets are excluded from destination-wide detection; their source network can still appear as a source-specific issue.
+- Destination-wide ASN incidents require agreement from at least three probes in at least two source ASes.
+- Target regressions additionally exclude probes failing at least 80% of packets across three or more active targets; those probes' source network can still appear as a source-specific issue.
 - The Targets issue page requires recent agreement from at least three probes in two source ASes, excludes broadly failing probes, and only reports targets whose packet loss increased at least 20 points from a prior 24-hour baseline of at most 20% loss.

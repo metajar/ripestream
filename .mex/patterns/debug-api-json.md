@@ -10,7 +10,7 @@ edges:
     condition: when the failing endpoint reads FalkorDB aggregates
   - target: ../context/conventions.md
     condition: when changing API response handling
-last_updated: 2026-07-16
+last_updated: 2026-07-21
 ---
 
 # Debug API JSON
@@ -30,6 +30,7 @@ Confirm the failing page, then request each API endpoint it loads directly and i
 - FalkorDB aggregate queries may return one row even when the preceding `MATCH` produced no rows.
 - Go's `encoding/json` rejects `NaN` and infinities.
 - Writing `200` before encoding prevents the server from changing the status when encoding fails.
+- A Cloudflare Tunnel `502` with body `error code: 502` (plain text, not JSON) usually means the origin closed or stalled before responding — often a FalkorDB aggregate that exceeded the read/query timeout. Fix the slow query; do not treat the Cloudflare body as an API envelope.
 
 ## Verify
 - Add a unit test covering a non-finite scalar and an API encoding failure.

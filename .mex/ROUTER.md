@@ -18,7 +18,7 @@ edges:
     condition: when working with alerting engine, rule CRUD, or alert state management
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-07-17
+last_updated: 2026-07-21
 ---
 
 # Session Bootstrap
@@ -43,6 +43,7 @@ Then read this file fully before doing anything else in this session.
 - Transit pair analysis and topology visualization
 - Click-through transit relationship evidence with active RIPE tests and historical loss/RTT charts
 - Valid JSON API responses for empty graph aggregates, including ASN pages with no PING evidence
+- Destination ASN worklists use a single-pass FalkorDB aggregate with cross-network `MinSourceASes` consensus (avoids Cloudflare Tunnel plain-text 502s from the previous double-scan timeout)
 - Path finding and subgraph queries
 - Alert rule CRUD and event history
 - Issue detection and worklist views
@@ -67,7 +68,8 @@ Then read this file fully before doing anything else in this session.
 
 **Known issues:**
 - Overview inventory counts still scale with retained graph size (cached with 60s TTL)
-- FalkorDB ReadTimeout must be >= 10s to avoid socket timeouts on aggregate queries
+- FalkorDB ReadTimeout must be above `readQueryTimeoutMS` (20s socket / 15s query) to avoid socket timeouts on aggregate queries
+- Destination ASN worklists use a single-pass PING aggregate with `MinSourceASes` consensus; the previous double-scan noisy-probe prefilter timed out behind Cloudflare Tunnel as a plain-text 502
 - Alert states persist across restarts (no clean-state mechanism)
 - No dry-run mode for new alert rules (live immediately)
 

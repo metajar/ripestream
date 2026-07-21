@@ -52,17 +52,18 @@ func New(cfg Config) (*Store, error) {
 		cfg.ActiveWindow = 30 * time.Minute
 	}
 	// go-redis defaults ReadTimeout to 3s, which is SHORTER than the graph's
-	// server-side query timeout (readQueryTimeoutMS, 5s). Aggregate read queries
-	// over the live firehose graph regularly take 2–4s; without raising the
-	// socket read timeout the connection is abandoned with "i/o timeout" before
-	// the query returns a result (or its own server-side timeout). Set read/dial
-	// timeouts comfortably above the query timeout, and give the pool enough
-	// connections to keep reads from starving under write load.
+	// server-side query timeout (readQueryTimeoutMS). Aggregate read queries
+	// over the live firehose graph regularly take several seconds; without
+	// raising the socket read timeout the connection is abandoned with
+	// "i/o timeout" before the query returns a result (or its own server-side
+	// timeout). Set read/dial timeouts comfortably above the query timeout,
+	// and give the pool enough connections to keep reads from starving under
+	// write load.
 	opt := &falkordb.ConnectionOption{
 		Addr:         cfg.Addr,
 		DialTimeout:  5 * time.Second,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  20 * time.Second,
+		WriteTimeout: 20 * time.Second,
 		PoolSize:     20,
 	}
 	if cfg.Password != "" {

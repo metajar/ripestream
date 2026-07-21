@@ -17,7 +17,7 @@ edges:
     condition: when setting up FalkorDB or troubleshooting graph connectivity
   - target: context/alerts.md
     condition: when configuring alerting engine or SQLite database
-last_updated: 2026-07-17
+last_updated: 2026-07-21
 ---
 
 # Setup
@@ -70,7 +70,7 @@ last_updated: 2026-07-17
 - **Cloudflare Tunnel deployment**: Run `docker-compose.prod.yml` and route the tunnel to `http://localhost:8080`. Only the application port is published; ClickHouse and FalkorDB remain private to the Compose network.
 - **Production ASN download fails**: The R2 token needs Object Read access to the configured private bucket. Match `R2_JURISDICTION` to the bucket (`default`, `eu`, or `fedramp`) and set `R2_OBJECT_KEY` when the raw MMDB is not stored as `GeoLite2-ASN.mmdb`. An optional `GEOLITE_DB_SHA256` rejects a corrupt or unexpected object.
 - **ClickHouse connection refused**: Ensure Docker Compose is running (`docker compose ps`). Check ClickHouse container logs (`docker compose logs clickhouse`).
-- **FalkorDB timeout errors**: Increase ReadTimeout in `internal/graph/store.go` (currently 10s). Check FalkorDB container is healthy (`docker compose ps falkordb`).
+- **FalkorDB timeout errors**: Increase ReadTimeout in `internal/graph/store.go` (currently 20s, above the 15s query timeout). Check FalkorDB container is healthy (`docker compose ps falkordb`).
 - **Port already in use**: `lsof -i :8080` to find process, `kill -9 [PID]` or change `RIPESTREAM_HTTP_ADDR`.
 - **UI not loading**: Ensure UI was built (`cd web && npm run build`) before `go build`. Check `--ui-enabled` flag (default true).
 - **GeoLite2 ASN lookup fails**: Download MMDB file or set `--asn-db=""` to disable ASN enrichment (warnings only, not fatal).

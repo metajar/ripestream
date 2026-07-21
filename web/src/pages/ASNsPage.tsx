@@ -68,7 +68,7 @@ export function ASNsPage() {
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Autonomous Systems</h1>
           <p className="text-sm text-text-quaternary">
-            Ranked by impact (loss × probes). Sorted server-side.
+            Ranked by impact (loss × probes). Destinations require agreement from at least two source networks.
           </p>
         </div>
         <div className="flex gap-1 rounded-lg border border-border-primary bg-bg-secondary p-1">

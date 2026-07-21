@@ -72,8 +72,9 @@ type overviewMeta struct {
 // order (asc|desc), min_probes, min_loss, and limit.
 func (s *Server) asnIssues(w http.ResponseWriter, r *http.Request) {
 	limit, offset := pageParams(r, 25)
+	role := r.URL.Query().Get("role")
 	f := graph.ASNIssueFilter{
-		Role:      r.URL.Query().Get("role"),
+		Role:      role,
 		MinLoss:   qFloat(r, "min_loss", 0.1),
 		MinProbes: qInt64(r, "min_probes"),
 		Limit:     limit + 1,
@@ -81,6 +82,11 @@ func (s *Server) asnIssues(w http.ResponseWriter, r *http.Request) {
 		Query:     r.URL.Query().Get("q"),
 		Sort:      r.URL.Query().Get("sort"),
 		Order:     r.URL.Query().Get("order"),
+	}
+	// Destination worklists default to cross-network agreement; callers can
+	// raise this via min_source_ases when needed.
+	if v := qInt64(r, "min_source_ases"); v > 0 {
+		f.MinSourceASes = v
 	}
 	out, err := s.graph.ASNIssues(r.Context(), f)
 	if err != nil {

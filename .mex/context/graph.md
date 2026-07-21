@@ -20,7 +20,7 @@ edges:
     condition: when writing Cypher queries or working with graph operations
   - target: patterns/add-graph-query.md
     condition: when implementing a new graph query feature
-last_updated: 2026-07-17
+last_updated: 2026-07-21
 ---
 
 # Graph & Topology
@@ -79,7 +79,7 @@ FalkorDB requires range indexes for MERGE lookups:
 ## Gotchas
 - **Empty aggregates**: FalkorDB can return `NaN` for arithmetic over an empty aggregate row; guard divisors in Cypher with `CASE WHEN total > 0` and keep scalar conversion non-finite-safe so JSON encoding cannot fail.
 - **Loss-filter bias**: never filter `PING` edges by `loss_ratio` before calculating a target aggregate; doing so removes healthy evidence and can turn a mixed target into a false 100% loss result.
-- **Read timeout**: FalkorDB go-redis client defaults ReadTimeout to 3s, shorter than server-side query timeout (5s). Aggregate queries (especially Overview) can take 2-4s. Must set ReadTimeout >= 10s to avoid "i/o timeout" errors.
+- **Read timeout**: FalkorDB go-redis client defaults ReadTimeout to 3s, shorter than server-side query timeout. Aggregate queries can take several seconds on a populated graph. Must set ReadTimeout above `readQueryTimeoutMS` (15s query / 20s socket) to avoid "i/o timeout" errors.
 - **Connection pool**: Default pool size is too small for concurrent read + write load. Set PoolSize >= 20.
 - **Idempotent MERGE**: Running the same MERGE twice is safe. Edge properties get updated, nodes get merged. No duplicates.
 - **Schema enforcement**: FalkorDB is schemaless for properties, but indexes must exist for MERGE performance.
